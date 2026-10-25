@@ -41,6 +41,28 @@ struct AppState {
   uint8_t  battPercent   = 0;       // carga estimada 0-100%
   bool     battCharging  = false;   // true quando em USB/carga (V acima do max Li-Ion)
 
+  // ---- Range test (modo TEST_LORA_RANGE) ----
+  uint32_t rtSeq         = 0;       // contador de pings enviados
+  uint32_t rtAcks        = 0;       // quantos ACKs recebidos
+  bool     rtGotAck      = false;   // último ping teve ACK?
+  int      rtRssiFwd     = 0;       // RSSI de IDA (medido pelo Heltec)
+  float    rtSnrFwd      = 0.0f;    // SNR de IDA
+  int      rtRssiRev     = 0;       // RSSI de VOLTA (medido pelo T-Deck no ACK)
+  float    rtSnrRev      = 0.0f;    // SNR de VOLTA
+  uint32_t rtLastAckMs   = 0;       // millis() do último ACK recebido
+
+  // ---- Telemetria WiFi/ThingSpeak (modo RANGE_TELEMETRY) ----
+  bool     tsEnabled     = false;   // telemetria compilada/ativa neste firmware
+  bool     wifiUp        = false;   // WiFi conectado agora
+  uint8_t  tsLastStatus  = 0;       // 0=none, 1=ok, 2=fail (último POST)
+  uint32_t tsPostCount   = 0;       // posts OK acumulados
+
+  // ---- Waypoints (marcas via teclado, modo range test) ----
+  uint32_t wpCount       = 0;       // total de marcas registradas
+  uint8_t  wpLastLabel   = 0;       // rótulo da última marca (0=genérica, 1-9)
+  uint32_t wpLastMs      = 0;       // millis() da última marca (p/ aviso na tela)
+  bool     wpPending     = false;   // marca aguardando envio pela telemetria
+
   // ---- Flag de "algo mudou" para a UI redesenhar só quando necessário ----
   volatile bool dirty    = true;
 };
