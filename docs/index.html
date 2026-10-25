@@ -14,7 +14,7 @@
     * { box-sizing: border-box; }
     html, body { margin:0; height:100%; font-family: system-ui, sans-serif;
                  background:var(--bg); color:var(--fg); }
-    #map { position:absolute; top:0; left:0; right:0; bottom:0; background:#ccc; }
+    #map { position:absolute; top:0; left:0; right:0; bottom:0; }
     #panel {
       position:absolute; z-index:1000; top:10px; left:10px;
       background:var(--panel); padding:12px 14px; border-radius:10px;
@@ -70,15 +70,11 @@
   <script>
     const map = L.map('map').setView([-23.5412, -46.6456], 16);
 
-    // Fundo em PRETO E BRANCO (tons de cinza). CARTO "light_nolabels" é
-    // gratuito e neutro, deixando os pontos coloridos saltarem. Camada de
-    // rótulos (nomes de ruas) por cima, também em cinza.
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
-      maxZoom: 19, subdomains:'abcd',
-      attribution: '&copy; OpenStreetMap &copy; CARTO'
-    }).addTo(map);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', {
-      maxZoom: 19, subdomains:'abcd', pane:'overlayPane'
+    // Fundo OpenStreetMap padrão (colorido, gratuito, sem necessidade de
+    // API key). Os pontos coloridos seguem por cima.
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap'
     }).addTo(map);
 
     let layer = L.layerGroup().addTo(map);
