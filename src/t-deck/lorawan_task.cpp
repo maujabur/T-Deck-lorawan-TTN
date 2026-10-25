@@ -13,6 +13,9 @@
 #ifdef TEST_LORA_RANGE
 #include "range_proto.h"        // protocolo PING/ACK
 #endif
+#ifdef RANGE_TELEMETRY
+#include "telemetry.h"          // upload WiFi -> ThingSpeak
+#endif
 
 // ---- Hardware do rádio (privado deste módulo) ----
 // No T-Deck o display e o rádio compartilham os MESMOS pinos SPI (40/41/38).
@@ -90,6 +93,11 @@ void loraTask(void* pvParameters) {
   // T-Deck transmite PING, troca para RX e espera o ACK do Heltec. O ACK traz
   // o RSSI/SNR de IDA (medido pelo Heltec); o RSSI/SNR de VOLTA é medido aqui.
   // Mostra tudo na tela para teste de alcance a pé, sem TTN nem internet.
+#ifdef RANGE_TELEMETRY
+  // Opcional: conecta no WiFi para postar no ThingSpeak. Se falhar, o range
+  // test continua normalmente só com o display (telemetria é bônus).
+  telemetryBegin();
+#endif
   uint32_t seq = 0;
   for (;;) {
     seq++;
@@ -146,6 +154,31 @@ void loraTask(void* pvParameters) {
       g_state.phase = gotAck ? LoRaWANPhase::JOINED : LoRaWANPhase::WAITING;
       g_state.dirty = true;
     }
+
+#ifdef RANGE_TELEMETRY
+    // Posta no ThingSpeak (o módulo respeita o intervalo mínimo de ~16s
+    // internamente, então chamar todo ciclo é seguro). Lê GPS do estado.
+    if (gotAck) {
+      bool   fix; double lat, lon; uint32_t acks;
+      {
+        AppStateGuard guard;
+        fix  = g_state.gpsFix;
+        lat  = g_state.latitude;
+        lon  = g_state.longitude;
+        acks = g_state.rtAcks;
+      }
+      telemetryPost(rssiFwd, snrFwd, rssiRev, snrRev, seq, acks, fix, lat, lon);
+    }
+    // Publica o status da telemetria para a UI mostrar de forma compacta.
+    {
+      AppStateGuard guard;
+      g_state.tsEnabled    = true;
+      g_state.wifiUp       = telemetryWifiUp();
+      g_state.tsLastStatus = (uint8_t)telemetryLastStatus();
+      g_state.tsPostCount  = telemetryPostCount();
+      g_state.dirty        = true;
+    }
+#endif
 
     // ~2s entre pings. Não-bloqueante (cede CPU para UI/GPS).
     vTaskDelay(pdMS_TO_TICKS(2000));

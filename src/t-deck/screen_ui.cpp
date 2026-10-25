@@ -64,16 +64,50 @@ static void drawRangeTest(const AppState& s) {
   tft.setTextSize(2);
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
   tft.setCursor(10, 6);
-  tft.println("== RANGE TEST ==");
+  tft.print("== RANGE TEST ==");
+
+  // Indicador compacto de telemetria no canto superior direito (só quando
+  // a telemetria está ativa neste firmware). Formato: "WiFi TS:N"
+  //   WiFi -> verde conectado, vermelho caído
+  //   TS:N -> N posts OK; cor do último POST (verde ok / verm falha / cinza)
+  if (s.tsEnabled) {
+    tft.setTextSize(1);
+    // "WiFi"
+    const char* wifiTxt = "WiFi";
+    uint16_t wifiCol = s.wifiUp ? TFT_GREEN : TFT_RED;
+    char tsTxt[12];
+    snprintf(tsTxt, sizeof(tsTxt), " TS:%lu", (unsigned long)s.tsPostCount);
+    uint16_t tsCol = (s.tsLastStatus == 1) ? TFT_GREEN
+                   : (s.tsLastStatus == 2) ? TFT_RED
+                                           : TFT_DARKGREY;
+    int16_t wW = tft.textWidth(wifiTxt);
+    int16_t tW = tft.textWidth(tsTxt);
+    int16_t x0 = tft.width() - (wW + tW) - 4;
+    tft.setCursor(x0, 4);
+    tft.setTextColor(wifiCol, TFT_BLACK);
+    tft.print(wifiTxt);
+    tft.setTextColor(tsCol, TFT_BLACK);
+    tft.print(tsTxt);
+  }
 
   // Estado do último ping: verde se teve ACK, vermelho se não.
   uint32_t ageMs = (s.rtLastAckMs > 0) ? (millis() - s.rtLastAckMs) : 0;
   bool linkUp = s.rtGotAck && (s.rtLastAckMs > 0) && (ageMs < 10000);
 
-  tft.setTextSize(2);
-  tft.setTextColor(linkUp ? TFT_GREEN : TFT_RED, TFT_BLACK);
-  tft.setCursor(10, 34);
-  tft.print(linkUp ? "ENLACE OK" : "SEM ACK");
+  // ENLACE OK em verde; SEM ACK em vermelho brilhante com fundo, para
+  // chamar atenção de relance no campo.
+  tft.setTextSize(3);
+  if (linkUp) {
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setCursor(10, 30);
+    tft.print("ENLACE OK");
+  } else {
+    // Faixa vermelha preenchida com texto branco = alto contraste.
+    tft.fillRect(0, 28, tft.width(), 30, TFT_RED);
+    tft.setTextColor(TFT_WHITE, TFT_RED);
+    tft.setCursor(10, 30);
+    tft.print("SEM ACK");
+  }
 
   tft.setTextSize(1);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);

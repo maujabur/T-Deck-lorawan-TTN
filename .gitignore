@@ -6,3 +6,9 @@
 .vscode/launch.json
 .vscode/ipch
 compile_commands.json
+
+# Fotos/imagens temporárias de depuração (não versionar)
+temp_images/
+
+# Credenciais de WiFi/serviços (ver secrets.example.h)
+src/common/secrets.h

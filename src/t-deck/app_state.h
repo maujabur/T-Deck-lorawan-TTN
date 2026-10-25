@@ -51,6 +51,12 @@ struct AppState {
   float    rtSnrRev      = 0.0f;    // SNR de VOLTA
   uint32_t rtLastAckMs   = 0;       // millis() do último ACK recebido
 
+  // ---- Telemetria WiFi/ThingSpeak (modo RANGE_TELEMETRY) ----
+  bool     tsEnabled     = false;   // telemetria compilada/ativa neste firmware
+  bool     wifiUp        = false;   // WiFi conectado agora
+  uint8_t  tsLastStatus  = 0;       // 0=none, 1=ok, 2=fail (último POST)
+  uint32_t tsPostCount   = 0;       // posts OK acumulados
+
   // ---- Flag de "algo mudou" para a UI redesenhar só quando necessário ----
   volatile bool dirty    = true;
 };

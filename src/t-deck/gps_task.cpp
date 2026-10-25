@@ -17,6 +17,21 @@ void gpsTask(void* pvParameters) {
 
   uint32_t diagTick = 0;   // heartbeat de diagnóstico (~3s)
 
+#ifdef GPS_RAW_DUMP
+  // DIAGNOSTICO: imprime os bytes CRUS do GPS por ~8s para vermos se e NMEA
+  // legivel ("$GPGGA,...") ou lixo (baud errado). Remova apos diagnosticar.
+  Serial.println("[GPS-RAW] dump dos bytes crus por ~8s:");
+  uint32_t until = millis() + 8000;
+  while (millis() < until) {
+    while (gpsSerial.available() > 0) {
+      char c = (char)gpsSerial.read();
+      Serial.write(c);
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+  Serial.println("\n[GPS-RAW] fim do dump.");
+#endif
+
   for (;;) {
     // Drena tudo que chegou no buffer da UART e joga no parser.
     while (gpsSerial.available() > 0) {
@@ -28,10 +43,14 @@ void gpsTask(void* pvParameters) {
     //   chars sobe, cs>0   -> baud errado / ruído (sentencas corrompidas)
     //   chars sobe, cs=0   -> dados OK, só falta travar satélites (ceu aberto)
     if (diagTick == 0) {
-      Serial.printf("[GPS] chars=%lu  sentences=%lu  checksumErr=%lu  fix=%d  sats=%lu\n",
+      // passedChecksum: sentencas NMEA VALIDAS (com checksum correto), nao so
+      // as com fix. Se este numero sobe mas sats=0 -> antena/ceu; se fica 0
+      // com chars subindo -> baud errado / bytes corrompidos.
+      Serial.printf("[GPS] chars=%lu  nmeaOK=%lu  csErr=%lu  withFix=%lu  fix=%d  sats=%lu\n",
                     (unsigned long)gps.charsProcessed(),
-                    (unsigned long)gps.sentencesWithFix(),
+                    (unsigned long)gps.passedChecksum(),
                     (unsigned long)gps.failedChecksum(),
+                    (unsigned long)gps.sentencesWithFix(),
                     gps.location.isValid() ? 1 : 0,
                     (unsigned long)(gps.satellites.isValid() ? gps.satellites.value() : 0));
     }
