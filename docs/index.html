@@ -2,62 +2,134 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>LoRa Range Map — T-Deck</title>
 
-  <!-- Leaflet (mapa) via CDN -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+  <!-- flatpickr: date picker visual (calendário), modo range, sem API key -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/themes/dark.css" />
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/l10n/pt.js"></script>
+
   <style>
-    :root { --bg:#111; --panel:#1b1b1b; --fg:#eee; --muted:#888; }
+    :root { --bg:#111; --panel:#1b1b1b; --fg:#eee; --muted:#888; --accent:#2b6cb0; }
     * { box-sizing: border-box; }
     html, body { margin:0; height:100%; font-family: system-ui, sans-serif;
                  background:var(--bg); color:var(--fg); }
-    #map { position:absolute; top:0; left:0; right:0; bottom:0; }
-    #panel {
-      position:absolute; z-index:1000; top:10px; left:10px;
-      background:var(--panel); padding:12px 14px; border-radius:10px;
-      box-shadow:0 2px 10px rgba(0,0,0,.5); max-width:300px; font-size:13px;
+    #map { position:absolute; inset:0; }
+
+    /* Barra superior sempre visível com o botão de abrir/fechar. */
+    #topbar {
+      position:absolute; z-index:1001; top:8px; left:8px;
+      display:flex; gap:8px; align-items:center;
     }
-    #panel h1 { font-size:15px; margin:0 0 8px; }
-    #panel label { display:block; margin:6px 0 2px; color:var(--muted); }
-    #panel input { width:100%; padding:5px 6px; border-radius:6px;
-                   border:1px solid #333; background:#0d0d0d; color:var(--fg); }
-    #panel .row { display:flex; gap:8px; align-items:center; margin-top:8px; }
-    #panel button { padding:6px 10px; border-radius:6px; border:0;
-                    background:#2b6cb0; color:#fff; cursor:pointer; }
-    #panel button:hover { background:#3b82c4; }
+    #toggle {
+      background:var(--panel); color:var(--fg); border:0; cursor:pointer;
+      width:40px; height:40px; border-radius:10px; font-size:18px;
+      box-shadow:0 2px 8px rgba(0,0,0,.5);
+    }
+    #title-pill {
+      background:var(--panel); color:var(--fg); padding:0 12px; height:40px;
+      display:flex; align-items:center; border-radius:10px; font-size:14px;
+      font-weight:600; box-shadow:0 2px 8px rgba(0,0,0,.5);
+    }
+
+    /* Painel (drawer). Escondido por padrão no mobile. */
+    #panel {
+      position:absolute; z-index:1000; top:56px; left:8px;
+      background:var(--panel); padding:12px 14px; border-radius:10px;
+      box-shadow:0 2px 10px rgba(0,0,0,.5); width:300px; max-width:calc(100vw - 16px);
+      font-size:13px; max-height:calc(100vh - 70px); overflow:auto;
+    }
+    #panel.hidden { display:none; }
+    #panel label { display:block; margin:8px 0 2px; color:var(--muted); }
+    #panel input, #panel select {
+      width:100%; padding:6px; border-radius:6px;
+      border:1px solid #333; background:#0d0d0d; color:var(--fg);
+    }
+    #panel .row { display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+    #panel button.act {
+      padding:7px 12px; border-radius:6px; border:0;
+      background:var(--accent); color:#fff; cursor:pointer; font-size:13px;
+    }
+    #panel button.act:hover { background:#3b82c4; }
     #stats { margin-top:10px; line-height:1.5; }
     #stats b { color:#fff; }
     .legend { margin-top:10px; }
     .legend span { display:inline-block; width:12px; height:12px; border-radius:3px;
                    margin-right:4px; vertical-align:middle; }
-    #auto { accent-color:#2b6cb0; }
+    input[type=checkbox] { width:auto; accent-color:var(--accent); }
+    .hr { border-top:1px solid #333; margin:12px 0 4px; }
+
+    /* Botões de preset de período (um clique). */
+    .presets { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
+    .presets .pst {
+      padding:6px 10px; border-radius:16px; border:1px solid #333;
+      background:#0d0d0d; color:var(--fg); cursor:pointer; font-size:12px;
+    }
+    .presets .pst:hover { border-color:var(--accent); }
+    .presets .pst.sel { background:var(--accent); border-color:var(--accent); color:#fff; }
+
+    /* Controle de animação, fixo no rodapé. */
+    #anim {
+      position:absolute; z-index:1000; bottom:10px; left:50%; transform:translateX(-50%);
+      background:var(--panel); padding:8px 12px; border-radius:10px;
+      box-shadow:0 2px 10px rgba(0,0,0,.5); display:flex; gap:10px; align-items:center;
+      font-size:13px; max-width:calc(100vw - 16px);
+    }
+    #anim button { background:var(--accent); color:#fff; border:0; cursor:pointer;
+                   border-radius:6px; width:36px; height:32px; font-size:15px; }
+    #anim input[type=range] { width:140px; accent-color:var(--accent); }
+    #anim.hidden { display:none; }
+    #animInfo { color:var(--muted); min-width:84px; }
+
+    /* No desktop, o painel começa aberto. */
+    @media (min-width: 760px) { #panel { } }
   </style>
 </head>
 <body>
   <div id="map"></div>
 
-  <div id="panel">
-    <h1>LoRa Range Map</h1>
+  <div id="topbar">
+    <button id="toggle" title="Painel">&#9776;</button>
+    <div id="title-pill">LoRa Range Map</div>
+  </div>
 
+  <div id="panel" class="hidden">
     <label>Channel ID</label>
     <input id="chan" value="3550020" />
 
-    <label>Read API Key (deixe vazio se o canal for público)</label>
+    <label>Read API Key (vazio se o canal for público)</label>
     <input id="key" placeholder="(opcional)" />
 
-    <label>Quantidade de pontos</label>
-    <input id="results" type="number" value="500" min="10" max="8000" />
+    <label>Período</label>
+    <div id="presets" class="presets">
+      <button class="pst" data-min="60">1 hora</button>
+      <button class="pst" data-min="360">6 horas</button>
+      <button class="pst" data-min="1440">24 horas</button>
+      <button class="pst" data-min="10080">7 dias</button>
+      <button class="pst sel" data-n="500">Últimos 500</button>
+      <button class="pst" data-custom="1">Datas…</button>
+    </div>
+
+    <div id="box-range" style="display:none">
+      <label>Intervalo (clique início e fim no calendário)</label>
+      <input id="range" placeholder="Toque para escolher as datas" readonly />
+    </div>
 
     <div class="row">
-      <button id="load">Carregar</button>
-      <label style="margin:0;"><input type="checkbox" id="auto" /> auto 20s</label>
+      <button class="act" id="load">Carregar</button>
+      <button class="act" id="fit" style="background:#444">Ver tudo</button>
+      <label style="margin:0;display:flex;gap:4px;align-items:center;">
+        <input type="checkbox" id="auto" /> auto 20s</label>
     </div>
 
     <div id="stats"></div>
 
+    <div class="hr"></div>
     <div class="legend">
       <div>RSSI (ida):</div>
       <div><span style="background:#2ecc71"></span> forte (&ge; -70)</div>
@@ -67,20 +139,55 @@
     </div>
   </div>
 
+  <div id="anim" class="hidden">
+    <button id="playBtn" title="Animar">&#9654;</button>
+    <input id="scrub" type="range" min="0" max="0" value="0" />
+    <span id="animInfo">—</span>
+  </div>
+
   <script>
-    const map = L.map('map').setView([-23.5412, -46.6456], 16);
+    // Zoom control no canto superior DIREITO (o esquerdo fica sob o nosso ☰).
+    const map = L.map('map', { zoomControl: false }).setView([-23.5412, -46.6456], 16);
+    L.control.zoom({ position: 'topright' }).addTo(map);
 
-    // Fundo OpenStreetMap padrão (colorido, gratuito, sem necessidade de
-    // API key). Os pontos coloridos seguem por cima.
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap'
-    }).addTo(map);
+    // Dois fundos, trocados automaticamente conforme o zoom:
+    //  - Até zoom 16: Esri "World Gray Canvas" (cinza limpo p/ visão geral).
+    //  - Zoom 17+:    Esri "World Street Map" (níveis nítidos até 19, p/ close).
+    // Ambos gratuitos, sem API key, com embed permitido.
+    const ZOOM_SWITCH = 16;
+    const grayBase = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+      { maxNativeZoom: 16, maxZoom: 19, attribution: 'Tiles &copy; Esri' });
+    const grayRef = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+      { maxNativeZoom: 16, maxZoom: 19 });
+    const streetDetail = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 19, attribution: 'Tiles &copy; Esri' });
 
-    let layer = L.layerGroup().addTo(map);
+    function applyBasemap() {
+      const z = map.getZoom();
+      if (z > ZOOM_SWITCH) {
+        // Close: mapa de rua nítido.
+        if (map.hasLayer(grayBase)) { map.removeLayer(grayBase); map.removeLayer(grayRef); }
+        if (!map.hasLayer(streetDetail)) streetDetail.addTo(map).bringToBack();
+      } else {
+        // Visão geral: cinza limpo.
+        if (map.hasLayer(streetDetail)) map.removeLayer(streetDetail);
+        if (!map.hasLayer(grayBase)) { grayBase.addTo(map).bringToBack(); grayRef.addTo(map); }
+      }
+    }
+    map.on('zoomend', applyBasemap);
+    applyBasemap();  // define a camada inicial
+
+    const layer = L.layerGroup().addTo(map);
     let autoTimer = null;
+    let feeds = [];            // leituras com GPS (ordenadas)
+    let animTimer = null;
+    let didInitialFit = false; // só enquadra o mapa na 1a carga
 
-    // Cor por RSSI de ida (field1).
+    const $ = id => document.getElementById(id);
+
     function rssiColor(rssi) {
       if (rssi === null || isNaN(rssi)) return '#888';
       if (rssi >= -70)  return '#2ecc71';
@@ -88,84 +195,193 @@
       return '#e74c3c';
     }
 
+    // Painel recolhível.
+    $('toggle').addEventListener('click', () => $('panel').classList.toggle('hidden'));
+    // No desktop (tela larga), abre por padrão.
+    if (window.innerWidth >= 760) $('panel').classList.remove('hidden');
+
+    // Estado do filtro de período. Começa em "Últimos 500".
+    let filter = { kind: 'n', n: 500 };
+    let rangeStart = null, rangeEnd = null;   // datas do intervalo (flatpickr)
+
+    // Calendário visual em modo range, com hora. Sem digitação.
+    const fp = flatpickr('#range', {
+      mode: 'range',
+      enableTime: true,
+      time_24hr: true,
+      dateFormat: 'd/m/Y H:i',
+      locale: 'pt',
+      onClose: (dates) => {
+        if (dates.length === 2) {
+          rangeStart = dates[0];
+          rangeEnd   = dates[1];
+          load();   // carrega assim que o intervalo é escolhido
+        }
+      }
+    });
+
+    // Presets de período (um clique). O "Datas…" revela o intervalo manual.
+    document.querySelectorAll('#presets .pst').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#presets .pst').forEach(b => b.classList.remove('sel'));
+        btn.classList.add('sel');
+        if (btn.dataset.custom) {
+          filter = { kind: 'range' };
+          $('box-range').style.display = '';
+          fp.open();           // abre o calendário na hora
+          return;              // só carrega depois que escolher o intervalo
+        } else if (btn.dataset.min) {
+          filter = { kind: 'minutes', minutes: parseInt(btn.dataset.min) };
+          $('box-range').style.display = 'none';
+        } else if (btn.dataset.n) {
+          filter = { kind: 'n', n: parseInt(btn.dataset.n) };
+          $('box-range').style.display = 'none';
+        }
+        load();   // carrega na hora ao escolher o período
+      });
+    });
+
+    // Converte um objeto Date -> formato que o ThingSpeak aceita (UTC).
+    function toTsTime(d) {
+      if (!d) return null;
+      return d.toISOString().slice(0,19).replace('T',' ');  // "YYYY-MM-DD HH:MM:SS" UTC
+    }
+
     function buildUrl() {
-      const chan = document.getElementById('chan').value.trim();
-      const key  = document.getElementById('key').value.trim();
-      const n    = document.getElementById('results').value.trim() || '500';
-      let url = `https://api.thingspeak.com/channels/${chan}/feeds.json?results=${n}&location=true`;
+      const chan = $('chan').value.trim();
+      const key  = $('key').value.trim();
+      let url = `https://api.thingspeak.com/channels/${chan}/feeds.json?location=true`;
+
+      if (filter.kind === 'n') {
+        url += `&results=${filter.n || 500}`;
+      } else if (filter.kind === 'minutes') {
+        url += `&minutes=${filter.minutes || 60}`;
+      } else if (filter.kind === 'range') {
+        const s = toTsTime(rangeStart);
+        const e = toTsTime(rangeEnd);
+        if (s) url += `&start=${encodeURIComponent(s)}`;
+        if (e) url += `&end=${encodeURIComponent(e)}`;
+      }
       if (key) url += `&api_key=${key}`;
       return url;
     }
 
     async function load() {
-      const stats = document.getElementById('stats');
+      stopAnim();
+      const stats = $('stats');
       stats.textContent = 'Carregando...';
       let data;
       try {
         const r = await fetch(buildUrl());
         data = await r.json();
       } catch (e) {
-        stats.innerHTML = '<b style="color:#e74c3c">Erro ao buscar dados.</b> Verifique Channel ID / chave.';
+        stats.innerHTML = '<b style="color:#e74c3c">Erro ao buscar dados.</b>';
         return;
       }
       if (!data || !data.feeds) {
-        stats.innerHTML = '<b style="color:#e74c3c">Sem dados.</b> Canal privado? Preencha a Read API Key.';
+        stats.innerHTML = '<b style="color:#e74c3c">Sem dados.</b> Canal privado? Use a Read API Key.';
         return;
       }
 
-      layer.clearLayers();
-      const pts = [];
-      let wp = 0, withLoc = 0;
-      const track = [];
-
-      data.feeds.forEach(f => {
-        const lat = parseFloat(f.latitude);
-        const lon = parseFloat(f.longitude);
-        if (isNaN(lat) || isNaN(lon) || (lat === 0 && lon === 0)) return;
-        withLoc++;
-        track.push([lat, lon]);
-
-        const rssiIda = f.field1 !== null ? parseInt(f.field1) : null;
-        const label   = f.field7;  // waypoint label (se houver)
-
-        const popup =
-          `<b>entry ${f.entry_id}</b><br>` +
-          `${f.created_at}<br>` +
-          `RSSI ida: ${f.field1 ?? '-'} dBm<br>` +
-          `SNR ida: ${f.field2 ?? '-'} dB<br>` +
-          `RSSI volta: ${f.field3 ?? '-'} dBm<br>` +
-          `seq/acks: ${f.field5 ?? '-'} / ${f.field6 ?? '-'}` +
-          (label !== null && label !== undefined ? `<br><b>WAYPOINT: rótulo ${label}</b>` : '');
-
-        if (label !== null && label !== undefined) {
-          wp++;
-          L.circleMarker([lat, lon], {
-            radius: 9, color: '#fff', weight: 2,
-            fillColor: '#2b6cb0', fillOpacity: 1
-          }).bindPopup(popup).addTo(layer);
-        } else {
-          L.circleMarker([lat, lon], {
-            radius: 5, color: '#000', weight: 1,
-            fillColor: rssiColor(rssiIda), fillOpacity: 0.9
-          }).bindPopup(popup).addTo(layer);
-        }
-        pts.push([lat, lon]);
+      // Guarda só as leituras com GPS válido.
+      feeds = data.feeds.filter(f => {
+        const lat = parseFloat(f.latitude), lon = parseFloat(f.longitude);
+        return !isNaN(lat) && !isNaN(lon) && !(lat === 0 && lon === 0);
       });
 
-      if (track.length > 1) {
-        L.polyline(track, { color:'#2b6cb0', weight:2, opacity:0.5 }).addTo(layer);
-      }
-
+      let wp = feeds.filter(f => f.field7 !== null && f.field7 !== undefined).length;
       stats.innerHTML =
-        `<b>${data.feeds.length}</b> leituras, <b>${withLoc}</b> com GPS, ` +
+        `<b>${data.feeds.length}</b> leituras, <b>${feeds.length}</b> com GPS, ` +
         `<b>${wp}</b> waypoints.` +
         (data.channel ? `<br>Canal: <b>${data.channel.name||''}</b>` : '');
 
+      // Prepara o scrubber de animação.
+      $('scrub').max = Math.max(0, feeds.length - 1);
+      $('scrub').value = Math.max(0, feeds.length - 1);
+      $('anim').classList.toggle('hidden', feeds.length < 2);
+
+      drawUpTo(feeds.length);   // desenha tudo
+      // Só enquadra automaticamente na primeira carga, para não "puxar" o
+      // mapa de volta a cada auto-refresh enquanto você explora/dá zoom.
+      if (!didInitialFit) { fitAll(); didInitialFit = true; }
+    }
+
+    function popupFor(f) {
+      const label = f.field7;
+      return `<b>entry ${f.entry_id}</b><br>${f.created_at}<br>` +
+        `RSSI ida: ${f.field1 ?? '-'} dBm<br>SNR ida: ${f.field2 ?? '-'} dB<br>` +
+        `RSSI volta: ${f.field3 ?? '-'} dBm<br>seq/acks: ${f.field5 ?? '-'} / ${f.field6 ?? '-'}` +
+        (label != null ? `<br><b>WAYPOINT: rótulo ${label}</b>` : '');
+    }
+
+    // Desenha os pontos de 0..count-1. Os mais ANTIGOS ficam com opacidade
+    // menor (trail que enfraquece); o mais recente fica cheio.
+    function drawUpTo(count) {
+      layer.clearLayers();
+      const track = [];
+      for (let i = 0; i < count; i++) {
+        const f = feeds[i];
+        const lat = parseFloat(f.latitude), lon = parseFloat(f.longitude);
+        track.push([lat, lon]);
+
+        // Opacidade: ponto mais novo = 1.0; vai caindo para os antigos (min 0.15).
+        const age = count - 1 - i;             // 0 = mais novo
+        const op  = Math.max(0.15, 1 - age * 0.04);
+        const label = f.field7;
+        const isLast = (i === count - 1);
+
+        if (label != null) {
+          L.circleMarker([lat, lon], {
+            radius: 9, color:'#fff', weight:2, fillColor:'#2b6cb0', fillOpacity:op
+          }).bindPopup(popupFor(f)).addTo(layer);
+        } else {
+          L.circleMarker([lat, lon], {
+            radius: isLast ? 7 : 5, color:'#000', weight:1,
+            fillColor: rssiColor(f.field1!=null?parseInt(f.field1):null),
+            fillOpacity: op
+          }).bindPopup(popupFor(f)).addTo(layer);
+        }
+      }
+      if (track.length > 1)
+        L.polyline(track, { color:'#2b6cb0', weight:2, opacity:0.4 }).addTo(layer);
+
+      // Info da animação.
+      if (count > 0) {
+        const f = feeds[count-1];
+        $('animInfo').textContent = `${count}/${feeds.length} · ${(f.created_at||'').slice(11,19)}`;
+      }
+    }
+
+    function fitAll() {
+      const pts = feeds.map(f => [parseFloat(f.latitude), parseFloat(f.longitude)]);
       if (pts.length) map.fitBounds(pts, { padding:[40,40], maxZoom:17 });
     }
 
-    document.getElementById('load').addEventListener('click', load);
-    document.getElementById('auto').addEventListener('change', (e) => {
+    // ---- Animação ----
+    function stopAnim() {
+      if (animTimer) { clearInterval(animTimer); animTimer = null; $('playBtn').innerHTML = '&#9654;'; }
+    }
+    function startAnim() {
+      if (feeds.length < 2) return;
+      let i = parseInt($('scrub').value) || 0;
+      if (i >= feeds.length - 1) i = 0;  // reinicia se estava no fim
+      $('playBtn').innerHTML = '&#10073;&#10073;'; // pause
+      animTimer = setInterval(() => {
+        i++;
+        $('scrub').value = i;
+        drawUpTo(i + 1);
+        if (i >= feeds.length - 1) stopAnim();
+      }, 150);
+    }
+    $('playBtn').addEventListener('click', () => { animTimer ? stopAnim() : startAnim(); });
+    $('scrub').addEventListener('input', () => {
+      stopAnim();
+      drawUpTo(parseInt($('scrub').value) + 1);
+    });
+
+    $('load').addEventListener('click', load);
+    $('fit').addEventListener('click', fitAll);
+    $('auto').addEventListener('change', (e) => {
       if (e.target.checked) { load(); autoTimer = setInterval(load, 20000); }
       else { clearInterval(autoTimer); autoTimer = null; }
     });
