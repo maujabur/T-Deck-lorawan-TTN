@@ -17,6 +17,10 @@
 #include "gps_task.h"
 #include "lorawan_task.h"
 #include "battery.h"
+#ifdef TEST_KEYBOARD
+#include "keyboard.h"
+#include <TFT_eSPI.h>
+#endif
 
 void setup() {
   Serial.begin(115200);
@@ -24,6 +28,51 @@ void setup() {
   // 1) Bring-up OBRIGATÓRIO do T-Deck: energia, chip-selects altos, MISO
   //    pull-up e SPI.begin(). Precisa vir ANTES de tft.init()/radio.begin().
   boardInit();
+
+#ifdef TEST_KEYBOARD
+  // ===== MODO DE TESTE DO TECLADO =====
+  // Isolado: inicializa só tela + teclado e fica mostrando as teclas lidas.
+  // Não sobe GPS/rádio. Valida o hardware do teclado I2C (0x55) antes de
+  // construir qualquer feature em cima dele.
+  appStateInit();
+  screenInit();
+  bool kbOk = keyboardInit();
+  trackballInit();
+  Serial.printf("[KBTEST] teclado %s + trackball\n", kbOk ? "DETECTADO" : "NAO encontrado");
+  screenDebugLines("TESTE TECLADO",
+                   kbOk ? "Teclado: DETECTADO" : "Teclado: NAO ACHADO",
+                   "Tecla ou bolinha...");
+
+  // Loop de teste próprio (não retorna).
+  uint32_t keyCount = 0;
+  const char* tbName[] = { "NONE", "UP", "DOWN", "LEFT", "RIGHT", "CLICK" };
+  for (;;) {
+    char c = keyboardRead();
+    if (c != 0) {
+      keyCount++;
+      Serial.printf("[KBTEST] tecla: 0x%02X ('%c')  total=%lu\n",
+                    (uint8_t)c, (c >= 32 && c < 127) ? c : '.',
+                    (unsigned long)keyCount);
+      char l2[40], l3[40];
+      snprintf(l2, sizeof(l2), "Tecla: 0x%02X '%c'",
+               (uint8_t)c, (c >= 32 && c < 127) ? c : ' ');
+      snprintf(l3, sizeof(l3), "Total de teclas: %lu", (unsigned long)keyCount);
+      screenDebugLines("TESTE TECLADO", l2, l3);
+    }
+
+    TrackballDir d = trackballRead();
+    if (d != TrackballDir::NONE) {
+      Serial.printf("[KBTEST] trackball: %s\n", tbName[(uint8_t)d]);
+      char l3[40];
+      snprintf(l3, sizeof(l3), "Bolinha: %s", tbName[(uint8_t)d]);
+      screenDebugLines("TESTE TECLADO", "Mexa a bolinha", l3);
+      // Debounce simples do clique para não floodar.
+      if (d == TrackballDir::CLICK) delay(200);
+    }
+
+    delay(10);
+  }
+#endif
 
   // 2) Mutex do estado compartilhado antes de qualquer Task tocá-lo.
   appStateInit();

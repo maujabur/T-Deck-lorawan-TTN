@@ -21,3 +21,7 @@ void uiTask(void* pvParameters);
 // Válido só após screenInit().
 class SPIClass;
 SPIClass& screenGetSPI();
+
+// Desenha três linhas simples de texto (uso em telas de teste/diagnóstico).
+// Trava o barramento SPI internamente.
+void screenDebugLines(const char* l1, const char* l2, const char* l3);

@@ -12,6 +12,24 @@ SPIClass& screenGetSPI() {
   return tft.getSPIinstance();
 }
 
+void screenDebugLines(const char* l1, const char* l2, const char* l3) {
+  SpiBusGuard busGuard;
+  digitalWrite(BOARD_RADIO_CS,  HIGH);
+  digitalWrite(BOARD_SDCARD_CS, HIGH);
+
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.setCursor(10, 20);
+  tft.println(l1);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setCursor(10, 70);
+  tft.println(l2);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setCursor(10, 110);
+  tft.println(l3);
+}
+
 // --- Helpers de cor por fase do scanner ---
 static uint16_t phaseColor(LoRaWANPhase p) {
   switch (p) {
