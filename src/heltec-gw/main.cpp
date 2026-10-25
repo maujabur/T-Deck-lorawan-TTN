@@ -14,9 +14,11 @@
 #include <RadioLib.h>
 #include <SPI.h>
 #include <Wire.h>
+#include <math.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include "heltec_board.h"
+#include "range_proto.h"   // protocolo PING/ACK compartilhado
 
 // ---- OLED ----
 #define OLED_W 128
@@ -139,8 +141,23 @@ void loop() {
       lastMsg  = msg;
       lastRssi = radio.getRSSI();
       lastSnr  = radio.getSNR();
-      Serial.printf("[GW] RX #%lu  RSSI=%.1f dBm  SNR=%.1f dB  msg=\"%s\"\n",
-                    (unsigned long)rxCount, lastRssi, lastSnr, msg.c_str());
+
+      // Se for um PING do range test, responde um ACK com o RSSI/SNR que
+      // medimos (qualidade do enlace de IDA). O T-Deck casa pelo seq.
+      uint32_t seq = 0;
+      if (rangeParsePing(msg.c_str(), &seq)) {
+        char ack[48];
+        rangeMakeAck(ack, sizeof(ack), seq, (int)lround(lastRssi), lastSnr);
+
+        // Half-duplex: transmite o ACK e depois volta a escutar.
+        int16_t txSt = radio.transmit(ack);
+        Serial.printf("[GW] RX #%lu seq=%lu RSSI=%.1f SNR=%.1f -> ACK (tx %d)\n",
+                      (unsigned long)rxCount, (unsigned long)seq,
+                      lastRssi, lastSnr, txSt);
+      } else {
+        Serial.printf("[GW] RX #%lu  RSSI=%.1f dBm  SNR=%.1f dB  msg=\"%s\"\n",
+                      (unsigned long)rxCount, lastRssi, lastSnr, msg.c_str());
+      }
       drawScreen("");
     } else if (st == RADIOLIB_ERR_CRC_MISMATCH) {
       Serial.println("[GW] Pacote com CRC invalido");

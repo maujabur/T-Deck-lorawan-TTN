@@ -3,9 +3,15 @@
 #include "board.h"
 #include "screen_ui.h"
 #include <SPI.h>
+#include <math.h>
 
-#ifdef TEST_LORA_TX
+// Ambos os modos de teste usam LoRa cru com os mesmos parâmetros do Heltec.
+#if defined(TEST_LORA_TX) || defined(TEST_LORA_RANGE)
+#define LORA_RAW_TEST 1
 #include "lora_test_params.h"   // parâmetros de rádio compartilhados c/ Heltec
+#endif
+#ifdef TEST_LORA_RANGE
+#include "range_proto.h"        // protocolo PING/ACK
 #endif
 
 // ---- Hardware do rádio (privado deste módulo) ----
@@ -65,7 +71,7 @@ int16_t loraInit() {
   digitalWrite(BOARD_TFT_CS,    HIGH);
   digitalWrite(BOARD_SDCARD_CS, HIGH);
 
-#ifdef TEST_LORA_TX
+#ifdef LORA_RAW_TEST
   // MODO DE TESTE: LoRa cru nos mesmos parâmetros do receptor Heltec.
   int16_t state = radio.begin(LORATEST_FREQ, LORATEST_BW, LORATEST_SF,
                               LORATEST_CR, LORATEST_SYNC, LORATEST_TXPOWER,
@@ -78,6 +84,73 @@ int16_t loraInit() {
 
 void loraTask(void* pvParameters) {
   (void)pvParameters;
+
+#ifdef TEST_LORA_RANGE
+  // ===== MODO RANGE TEST BIDIRECIONAL =====
+  // T-Deck transmite PING, troca para RX e espera o ACK do Heltec. O ACK traz
+  // o RSSI/SNR de IDA (medido pelo Heltec); o RSSI/SNR de VOLTA é medido aqui.
+  // Mostra tudo na tela para teste de alcance a pé, sem TTN nem internet.
+  uint32_t seq = 0;
+  for (;;) {
+    seq++;
+    char ping[24];
+    rangeMakePing(ping, sizeof(ping), seq);
+
+    bool  gotAck   = false;
+    int   rssiFwd  = 0;      // IDA (vem no ACK)
+    float snrFwd   = 0.0f;
+    int   rssiRev  = 0;      // VOLTA (medido aqui no ACK)
+    float snrRev   = 0.0f;
+
+    {
+      SpiBusGuard busGuard;
+      digitalWrite(BOARD_TFT_CS,    HIGH);
+      digitalWrite(BOARD_SDCARD_CS, HIGH);
+
+      // 1) Transmite o PING.
+      int16_t txSt = radio.transmit(ping);
+
+      if (txSt == RADIOLIB_ERR_NONE) {
+        // 2) Escuta o ACK com timeout (bloqueante, mas nesta Task dedicada).
+        String resp;
+        int16_t rxSt = radio.receive(resp, 0);  // 0 = usa timeout padrão do SF
+        if (rxSt == RADIOLIB_ERR_NONE) {
+          uint32_t ackSeq = 0;
+          if (rangeParseAck(resp.c_str(), &ackSeq, &rssiFwd, &snrFwd) &&
+              ackSeq == seq) {
+            gotAck  = true;
+            rssiRev = (int)lround(radio.getRSSI());
+            snrRev  = radio.getSNR();
+          }
+        }
+      }
+    }
+
+    Serial.printf("[RANGE] seq=%lu ack=%d  IDA rssi=%d snr=%.1f  VOLTA rssi=%d snr=%.1f\n",
+                  (unsigned long)seq, gotAck ? 1 : 0,
+                  rssiFwd, snrFwd, rssiRev, snrRev);
+
+    // Publica no estado para a UI desenhar.
+    {
+      AppStateGuard guard;
+      g_state.rtSeq     = seq;
+      g_state.rtGotAck  = gotAck;
+      if (gotAck) {
+        g_state.rtAcks++;
+        g_state.rtRssiFwd   = rssiFwd;
+        g_state.rtSnrFwd    = snrFwd;
+        g_state.rtRssiRev   = rssiRev;
+        g_state.rtSnrRev    = snrRev;
+        g_state.rtLastAckMs = millis();
+      }
+      g_state.phase = gotAck ? LoRaWANPhase::JOINED : LoRaWANPhase::WAITING;
+      g_state.dirty = true;
+    }
+
+    // ~2s entre pings. Não-bloqueante (cede CPU para UI/GPS).
+    vTaskDelay(pdMS_TO_TICKS(2000));
+  }
+#endif
 
 #ifdef TEST_LORA_TX
   // ===== MODO DE TESTE PONTO-A-PONTO =====
