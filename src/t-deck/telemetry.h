@@ -27,6 +27,13 @@ void telemetryPost(int rssiFwd, float snrFwd, int rssiRev, float snrRev,
 // true se o WiFi está conectado no momento.
 bool telemetryWifiUp();
 
+// Posta uma MARCA (waypoint) imediatamente, ignorando o intervalo mínimo
+// (uma marca é um evento pontual que não deve ser descartado). field7=label.
+// Retorna true se o POST foi HTTP 200.
+bool telemetryPostWaypoint(uint8_t label, uint32_t wpCount,
+                           int rssiFwd, float snrFwd,
+                           bool gpsFix, double lat, double lon);
+
 // Status do último POST para a UI mostrar de forma compacta.
 enum class TsPostStatus : uint8_t {
   NONE = 0,   // ainda não tentou postar

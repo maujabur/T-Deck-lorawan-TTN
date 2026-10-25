@@ -82,3 +82,39 @@ void telemetryPost(int rssiFwd, float snrFwd, int rssiRev, float snrRev,
 
   lastPostMs = now;
 }
+
+bool telemetryPostWaypoint(uint8_t label, uint32_t wpCount,
+                           int rssiFwd, float snrFwd,
+                           bool gpsFix, double lat, double lon) {
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.reconnect();
+    return false;
+  }
+
+  // field7 = label da marca; field8 = contador de marcas. Inclui RSSI/SNR de
+  // ida e a posição, para o ponto marcado aparecer no mapa do ThingSpeak.
+  String url = "http://api.thingspeak.com/update?api_key=";
+  url += THINGSPEAK_WRITE_KEY;
+  url += "&field1=" + String(rssiFwd);
+  url += "&field2=" + String(snrFwd, 1);
+  url += "&field7=" + String(label);
+  url += "&field8=" + String(wpCount);
+  if (gpsFix) {
+    url += "&latitude="  + String(lat, 6);
+    url += "&longitude=" + String(lon, 6);
+  }
+
+  HTTPClient http;
+  http.begin(url);
+  int code = http.GET();
+  bool ok = (code == 200);
+  Serial.printf("[TS] WAYPOINT label=%u wp=%lu -> HTTP %d\n",
+                label, (unsigned long)wpCount, code);
+  if (ok) { postOkCount++; lastStatus = TsPostStatus::OK; }
+  else    { lastStatus = TsPostStatus::FAIL; }
+  http.end();
+
+  // Marca também conta para o espaçamento normal, para não estourar o limite.
+  lastPostMs = millis();
+  return ok;
+}

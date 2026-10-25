@@ -169,6 +169,26 @@ void loraTask(void* pvParameters) {
       }
       telemetryPost(rssiFwd, snrFwd, rssiRev, snrRev, seq, acks, fix, lat, lon);
     }
+    // Se houver uma MARCA pendente (teclado), envia imediatamente com o
+    // lat/lon atual — um evento pontual não deve esperar o intervalo normal.
+    {
+      bool     pending; uint8_t label; uint32_t wpCount;
+      bool     fix; double lat, lon;
+      {
+        AppStateGuard guard;
+        pending = g_state.wpPending;
+        label   = g_state.wpLastLabel;
+        wpCount = g_state.wpCount;
+        fix     = g_state.gpsFix;
+        lat     = g_state.latitude;
+        lon     = g_state.longitude;
+        g_state.wpPending = false;   // consome o flag
+      }
+      if (pending) {
+        telemetryPostWaypoint(label, wpCount, rssiFwd, snrFwd, fix, lat, lon);
+      }
+    }
+
     // Publica o status da telemetria para a UI mostrar de forma compacta.
     {
       AppStateGuard guard;

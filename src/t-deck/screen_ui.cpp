@@ -3,6 +3,31 @@
 #include "board.h"
 #include "battery.h"
 #include <TFT_eSPI.h>
+#ifdef TEST_LORA_RANGE
+#include "keyboard.h"   // marcar waypoints com o teclado
+#endif
+
+#ifdef TEST_LORA_RANGE
+// Mapeia uma tecla para um rótulo de waypoint. Retorna:
+//   0   = marca genérica (espaço)
+//   1-9 = marca rotulada (w,e,r,s,d,f,z,x,c)
+//   -1  = tecla não é de marca (ignorar)
+static int wpLabelForKey(char c) {
+  switch (c) {
+    case ' ': return 0;
+    case 'w': return 1;
+    case 'e': return 2;
+    case 'r': return 3;
+    case 's': return 4;
+    case 'd': return 5;
+    case 'f': return 6;
+    case 'z': return 7;
+    case 'x': return 8;
+    case 'c': return 9;
+    default:  return -1;
+  }
+}
+#endif
 
 // A tela é privada deste módulo. Só a uiTask mexe nela => sem corrida.
 static TFT_eSPI tft = TFT_eSPI();
@@ -67,6 +92,11 @@ void screenInit() {
   tft.setTextSize(2);
   tft.setCursor(10, 20);
   tft.println("=== T-DECK SCANNER ===");
+
+#ifdef TEST_LORA_RANGE
+  // Inicializa o teclado para marcar waypoints durante o range test.
+  keyboardInit();
+#endif
 }
 
 // Faz uma cópia local do estado sob trava, depois desenha sem segurar o
@@ -171,11 +201,25 @@ static void drawRangeTest(const AppState& s) {
     tft.printf("GPS sem fix (sats:%u)", s.satellites);
   }
 
-  // Bateria no rodapé.
-  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.setCursor(10, 212);
-  if (s.battCharging) tft.printf("CHARGING %.2fV", s.battVolts);
-  else                tft.printf("BAT %u%% %.2fV", s.battPercent, s.battVolts);
+  // Rodapé: mostra aviso de waypoint recém-marcado por ~3s; senão, bateria
+  // + contador de marcas.
+  uint32_t wpAge = (s.wpLastMs > 0) ? (millis() - s.wpLastMs) : 0xFFFFFFFF;
+  if (s.wpLastMs > 0 && wpAge < 3000) {
+    tft.fillRect(0, 210, tft.width(), 16, TFT_BLUE);
+    tft.setTextColor(TFT_WHITE, TFT_BLUE);
+    tft.setCursor(10, 212);
+    if (s.wpLastLabel == 0)
+      tft.printf("MARCA #%lu registrada", (unsigned long)s.wpCount);
+    else
+      tft.printf("MARCA #%lu  rotulo %u", (unsigned long)s.wpCount, s.wpLastLabel);
+  } else {
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.setCursor(10, 212);
+    if (s.battCharging) tft.printf("CHARGING %.2fV  M:%lu", s.battVolts,
+                                   (unsigned long)s.wpCount);
+    else tft.printf("BAT %u%% %.2fV  M:%lu", s.battPercent, s.battVolts,
+                    (unsigned long)s.wpCount);
+  }
 }
 #endif // TEST_LORA_RANGE
 
@@ -267,6 +311,23 @@ void uiTask(void* pvParameters) {
   uint32_t battTick = 0;   // contador para amostrar a bateria a cada ~5s
 
   for (;;) {
+#ifdef TEST_LORA_RANGE
+    // Lê o teclado: marca waypoint no ponto atual. A telemetria envia a
+    // marca (com lat/lon) no próximo POST; a tela mostra um aviso.
+    {
+      char key = keyboardRead();
+      int label = (key != 0) ? wpLabelForKey(key) : -1;
+      if (label >= 0) {
+        AppStateGuard guard;
+        g_state.wpCount++;
+        g_state.wpLastLabel = (uint8_t)label;
+        g_state.wpLastMs    = millis();
+        g_state.wpPending   = true;   // a loraTask/telemetria consome
+        g_state.dirty       = true;
+      }
+    }
+#endif
+
     // A cada ~5s (50 x 100ms) lê a bateria e publica no estado.
     if (battTick == 0) {
       float v  = batteryReadVolts();
