@@ -116,8 +116,13 @@
     </div>
 
     <div id="box-range" style="display:none">
-      <label>Intervalo (clique início e fim no calendário)</label>
-      <input id="range" placeholder="Toque para escolher as datas" readonly />
+      <label>Início</label>
+      <input id="dtStart" placeholder="toque para escolher" readonly />
+      <label>Fim</label>
+      <input id="dtEnd" placeholder="toque para escolher" readonly />
+      <div class="row">
+        <button class="act" id="applyRange">Aplicar intervalo</button>
+      </div>
     </div>
 
     <div class="row">
@@ -202,23 +207,24 @@
 
     // Estado do filtro de período. Começa em "Últimos 500".
     let filter = { kind: 'n', n: 500 };
-    let rangeStart = null, rangeEnd = null;   // datas do intervalo (flatpickr)
+    let rangeStart = null, rangeEnd = null;   // datas do intervalo
 
-    // Calendário visual em modo range, com hora. Sem digitação.
-    const fp = flatpickr('#range', {
-      mode: 'range',
-      enableTime: true,
-      time_24hr: true,
-      dateFormat: 'd/m/Y H:i',
-      locale: 'pt',
-      onClose: (dates) => {
-        if (dates.length === 2) {
-          rangeStart = dates[0];
-          rangeEnd   = dates[1];
-          load();   // carrega assim que o intervalo é escolhido
-        }
-      }
+    // Dois seletores SEPARADOS (início e fim), cada um com calendário + hora.
+    // Mais claro que o modo range quando o intervalo é dentro do mesmo dia.
+    const now = new Date();
+    const hourAgo = new Date(now.getTime() - 3600 * 1000);
+    const fpOpts = {
+      enableTime: true, time_24hr: true, dateFormat: 'd/m/Y H:i', locale: 'pt',
+    };
+    const fpStart = flatpickr('#dtStart', {
+      ...fpOpts, defaultDate: hourAgo,
+      onChange: (d) => { rangeStart = d[0] || null; }
     });
+    const fpEnd = flatpickr('#dtEnd', {
+      ...fpOpts, defaultDate: now,
+      onChange: (d) => { rangeEnd = d[0] || null; }
+    });
+    rangeStart = hourAgo; rangeEnd = now;   // valores iniciais
 
     // Presets de período (um clique). O "Datas…" revela o intervalo manual.
     document.querySelectorAll('#presets .pst').forEach(btn => {
@@ -228,8 +234,7 @@
         if (btn.dataset.custom) {
           filter = { kind: 'range' };
           $('box-range').style.display = '';
-          fp.open();           // abre o calendário na hora
-          return;              // só carrega depois que escolher o intervalo
+          return;              // escolhe início/fim e clica "Aplicar intervalo"
         } else if (btn.dataset.min) {
           filter = { kind: 'minutes', minutes: parseInt(btn.dataset.min) };
           $('box-range').style.display = 'none';
@@ -381,6 +386,13 @@
 
     $('load').addEventListener('click', load);
     $('fit').addEventListener('click', fitAll);
+    $('applyRange').addEventListener('click', () => {
+      filter = { kind: 'range' };
+      if (rangeStart && rangeEnd && rangeStart > rangeEnd) {
+        const t = rangeStart; rangeStart = rangeEnd; rangeEnd = t;  // corrige se trocados
+      }
+      load();
+    });
     $('auto').addEventListener('change', (e) => {
       if (e.target.checked) { load(); autoTimer = setInterval(load, 20000); }
       else { clearInterval(autoTimer); autoTimer = null; }
