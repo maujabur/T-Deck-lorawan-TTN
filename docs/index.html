@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LoRa Range Map — T-Deck</title>
+
+  <!-- Leaflet (mapa) via CDN -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    :root { --bg:#111; --panel:#1b1b1b; --fg:#eee; --muted:#888; }
+    * { box-sizing: border-box; }
+    html, body { margin:0; height:100%; font-family: system-ui, sans-serif;
+                 background:var(--bg); color:var(--fg); }
+    #map { position:absolute; top:0; left:0; right:0; bottom:0; background:#ccc; }
+    #panel {
+      position:absolute; z-index:1000; top:10px; left:10px;
+      background:var(--panel); padding:12px 14px; border-radius:10px;
+      box-shadow:0 2px 10px rgba(0,0,0,.5); max-width:300px; font-size:13px;
+    }
+    #panel h1 { font-size:15px; margin:0 0 8px; }
+    #panel label { display:block; margin:6px 0 2px; color:var(--muted); }
+    #panel input { width:100%; padding:5px 6px; border-radius:6px;
+                   border:1px solid #333; background:#0d0d0d; color:var(--fg); }
+    #panel .row { display:flex; gap:8px; align-items:center; margin-top:8px; }
+    #panel button { padding:6px 10px; border-radius:6px; border:0;
+                    background:#2b6cb0; color:#fff; cursor:pointer; }
+    #panel button:hover { background:#3b82c4; }
+    #stats { margin-top:10px; line-height:1.5; }
+    #stats b { color:#fff; }
+    .legend { margin-top:10px; }
+    .legend span { display:inline-block; width:12px; height:12px; border-radius:3px;
+                   margin-right:4px; vertical-align:middle; }
+    #auto { accent-color:#2b6cb0; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="panel">
+    <h1>LoRa Range Map</h1>
+
+    <label>Channel ID</label>
+    <input id="chan" value="3550020" />
+
+    <label>Read API Key (deixe vazio se o canal for público)</label>
+    <input id="key" placeholder="(opcional)" />
+
+    <label>Quantidade de pontos</label>
+    <input id="results" type="number" value="500" min="10" max="8000" />
+
+    <div class="row">
+      <button id="load">Carregar</button>
+      <label style="margin:0;"><input type="checkbox" id="auto" /> auto 20s</label>
+    </div>
+
+    <div id="stats"></div>
+
+    <div class="legend">
+      <div>RSSI (ida):</div>
+      <div><span style="background:#2ecc71"></span> forte (&ge; -70)</div>
+      <div><span style="background:#f1c40f"></span> médio (-70 a -100)</div>
+      <div><span style="background:#e74c3c"></span> fraco (&lt; -100)</div>
+      <div style="margin-top:4px;"><span style="background:#2b6cb0;border-radius:50%"></span> waypoint</div>
+    </div>
+  </div>
+
+  <script>
+    const map = L.map('map').setView([-23.5412, -46.6456], 16);
+
+    // Fundo em PRETO E BRANCO (tons de cinza). CARTO "light_nolabels" é
+    // gratuito e neutro, deixando os pontos coloridos saltarem. Camada de
+    // rótulos (nomes de ruas) por cima, também em cinza.
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19, subdomains:'abcd',
+      attribution: '&copy; OpenStreetMap &copy; CARTO'
+    }).addTo(map);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19, subdomains:'abcd', pane:'overlayPane'
+    }).addTo(map);
+
+    let layer = L.layerGroup().addTo(map);
+    let autoTimer = null;
+
+    // Cor por RSSI de ida (field1).
+    function rssiColor(rssi) {
+      if (rssi === null || isNaN(rssi)) return '#888';
+      if (rssi >= -70)  return '#2ecc71';
+      if (rssi >= -100) return '#f1c40f';
+      return '#e74c3c';
+    }
+
+    function buildUrl() {
+      const chan = document.getElementById('chan').value.trim();
+      const key  = document.getElementById('key').value.trim();
+      const n    = document.getElementById('results').value.trim() || '500';
+      let url = `https://api.thingspeak.com/channels/${chan}/feeds.json?results=${n}&location=true`;
+      if (key) url += `&api_key=${key}`;
+      return url;
+    }
+
+    async function load() {
+      const stats = document.getElementById('stats');
+      stats.textContent = 'Carregando...';
+      let data;
+      try {
+        const r = await fetch(buildUrl());
+        data = await r.json();
+      } catch (e) {
+        stats.innerHTML = '<b style="color:#e74c3c">Erro ao buscar dados.</b> Verifique Channel ID / chave.';
+        return;
+      }
+      if (!data || !data.feeds) {
+        stats.innerHTML = '<b style="color:#e74c3c">Sem dados.</b> Canal privado? Preencha a Read API Key.';
+        return;
+      }
+
+      layer.clearLayers();
+      const pts = [];
+      let wp = 0, withLoc = 0;
+      const track = [];
+
+      data.feeds.forEach(f => {
+        const lat = parseFloat(f.latitude);
+        const lon = parseFloat(f.longitude);
+        if (isNaN(lat) || isNaN(lon) || (lat === 0 && lon === 0)) return;
+        withLoc++;
+        track.push([lat, lon]);
+
+        const rssiIda = f.field1 !== null ? parseInt(f.field1) : null;
+        const label   = f.field7;  // waypoint label (se houver)
+
+        const popup =
+          `<b>entry ${f.entry_id}</b><br>` +
+          `${f.created_at}<br>` +
+          `RSSI ida: ${f.field1 ?? '-'} dBm<br>` +
+          `SNR ida: ${f.field2 ?? '-'} dB<br>` +
+          `RSSI volta: ${f.field3 ?? '-'} dBm<br>` +
+          `seq/acks: ${f.field5 ?? '-'} / ${f.field6 ?? '-'}` +
+          (label !== null && label !== undefined ? `<br><b>WAYPOINT: rótulo ${label}</b>` : '');
+
+        if (label !== null && label !== undefined) {
+          wp++;
+          L.circleMarker([lat, lon], {
+            radius: 9, color: '#fff', weight: 2,
+            fillColor: '#2b6cb0', fillOpacity: 1
+          }).bindPopup(popup).addTo(layer);
+        } else {
+          L.circleMarker([lat, lon], {
+            radius: 5, color: '#000', weight: 1,
+            fillColor: rssiColor(rssiIda), fillOpacity: 0.9
+          }).bindPopup(popup).addTo(layer);
+        }
+        pts.push([lat, lon]);
+      });
+
+      if (track.length > 1) {
+        L.polyline(track, { color:'#2b6cb0', weight:2, opacity:0.5 }).addTo(layer);
+      }
+
+      stats.innerHTML =
+        `<b>${data.feeds.length}</b> leituras, <b>${withLoc}</b> com GPS, ` +
+        `<b>${wp}</b> waypoints.` +
+        (data.channel ? `<br>Canal: <b>${data.channel.name||''}</b>` : '');
+
+      if (pts.length) map.fitBounds(pts, { padding:[40,40], maxZoom:17 });
+    }
+
+    document.getElementById('load').addEventListener('click', load);
+    document.getElementById('auto').addEventListener('change', (e) => {
+      if (e.target.checked) { load(); autoTimer = setInterval(load, 20000); }
+      else { clearInterval(autoTimer); autoTimer = null; }
+    });
+
+    load();
+  </script>
+</body>
+</html>
