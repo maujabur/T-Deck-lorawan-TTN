@@ -4,6 +4,10 @@
 #include "screen_ui.h"
 #include <SPI.h>
 
+#ifdef TEST_LORA_TX
+#include "lora_test_params.h"   // parâmetros de rádio compartilhados c/ Heltec
+#endif
+
 // ---- Hardware do rádio (privado deste módulo) ----
 // No T-Deck o display e o rádio compartilham os MESMOS pinos SPI (40/41/38).
 // Para não haver disputa pela matriz de pinos do ESP32-S3, o rádio usa a
@@ -61,12 +65,55 @@ int16_t loraInit() {
   digitalWrite(BOARD_TFT_CS,    HIGH);
   digitalWrite(BOARD_SDCARD_CS, HIGH);
 
+#ifdef TEST_LORA_TX
+  // MODO DE TESTE: LoRa cru nos mesmos parâmetros do receptor Heltec.
+  int16_t state = radio.begin(LORATEST_FREQ, LORATEST_BW, LORATEST_SF,
+                              LORATEST_CR, LORATEST_SYNC, LORATEST_TXPOWER,
+                              LORATEST_PREAMBLE);
+#else
   int16_t state = radio.begin();
+#endif
   return state;
 }
 
 void loraTask(void* pvParameters) {
   (void)pvParameters;
+
+#ifdef TEST_LORA_TX
+  // ===== MODO DE TESTE PONTO-A-PONTO =====
+  // Transmite um "ping" periódico em LoRa cru para o receptor Heltec validar
+  // o rádio do T-Deck. NÃO faz LoRaWAN. Reutiliza a UI para mostrar o status.
+  uint32_t pingCount = 0;
+  for (;;) {
+    pingCount++;
+    char msg[32];
+    snprintf(msg, sizeof(msg), "T-DECK PING %lu", (unsigned long)pingCount);
+
+    int16_t txState;
+    {
+      SpiBusGuard busGuard;
+      digitalWrite(BOARD_TFT_CS,    HIGH);
+      digitalWrite(BOARD_SDCARD_CS, HIGH);
+      txState = radio.transmit(msg);
+      // Volta a config de TX (transmit deixa o rádio em standby).
+    }
+
+    Serial.printf("[TEST-TX] enviado \"%s\" (cod %d)\n", msg, txState);
+
+    // Mostra na tela via estado compartilhado (reusa campos existentes).
+    {
+      AppStateGuard guard;
+      g_state.phase         = (txState == RADIOLIB_ERR_NONE)
+                              ? LoRaWANPhase::SCANNING : LoRaWANPhase::RADIO_ERROR;
+      g_state.lastRadioCode = txState;
+      g_state.joinAttempts  = pingCount;
+      g_state.dirty         = true;
+    }
+
+    // Transmite a cada ~3s. Não-bloqueante (cede CPU para UI/GPS).
+    vTaskDelay(pdMS_TO_TICKS(3000));
+  }
+#endif
 
   // Obs.: a checagem de rádio ausente é feita no main.cpp via loraInit();
   // se o rádio não subiu, esta Task nem chega a ser criada.

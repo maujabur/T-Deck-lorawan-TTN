@@ -25,13 +25,14 @@
 // Vext liga/desliga a alimentação do OLED (e outros). ATIVO EM NÍVEL BAIXO.
 #define HELTEC_VEXT        36
 
-// ---- Parâmetros de rádio (AU915 / banda ISM 915 MHz) ----
-// Para teste ponto-a-ponto, rádio e T-Deck precisam usar os MESMOS
-// parâmetros (frequência, BW, SF, CR, sync word, preâmbulo).
-#define HELTEC_RADIO_FREQ  915.0   // MHz
-#define HELTEC_RADIO_BW    125.0   // kHz
-#define HELTEC_RADIO_SF    9       // spreading factor
-#define HELTEC_RADIO_CR    7       // coding rate 4/7
-#define HELTEC_RADIO_SYNC  0x12    // sync word LoRa privado (0x12). TTN usa 0x34.
-#define HELTEC_RADIO_PREAMBLE  8
-#define HELTEC_RADIO_TXPOWER   10  // dBm
+// ---- Parâmetros de rádio ----
+// Vêm do header compartilhado para casar EXATAMENTE com o transmissor de
+// teste do T-Deck (modo TEST_LORA_TX).
+#include "lora_test_params.h"
+#define HELTEC_RADIO_FREQ      LORATEST_FREQ
+#define HELTEC_RADIO_BW        LORATEST_BW
+#define HELTEC_RADIO_SF        LORATEST_SF
+#define HELTEC_RADIO_CR        LORATEST_CR
+#define HELTEC_RADIO_SYNC      LORATEST_SYNC
+#define HELTEC_RADIO_PREAMBLE  LORATEST_PREAMBLE
+#define HELTEC_RADIO_TXPOWER   LORATEST_TXPOWER
