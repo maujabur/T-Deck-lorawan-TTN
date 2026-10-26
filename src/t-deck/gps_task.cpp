@@ -2,6 +2,26 @@
 #include "app_state.h"
 #include <TinyGPSPlus.h>
 
+// Converte uma data/hora UTC (campos do GPS) para epoch (segundos desde
+// 1970-01-01 UTC). Não usa timegm/mktime (indisponíveis/dependentes de TZ no
+// newlib do ESP); faz a contagem de dias diretamente. Válido para datas após
+// 1970.
+static time_t utcToEpoch(int year, int mon, int mday,
+                         int hour, int min, int sec) {
+  static const int cumDays[12] =
+      { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
+  long days = 0;
+  for (int y = 1970; y < year; y++) {
+    bool leap = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+    days += leap ? 366 : 365;
+  }
+  days += cumDays[mon - 1];
+  bool leapThis = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+  if (mon > 2 && leapThis) days += 1;   // 29 de fevereiro deste ano
+  days += (mday - 1);
+  return (time_t)days * 86400L + hour * 3600L + min * 60L + sec;
+}
+
 // Parser e porta serial privados deste módulo.
 static TinyGPSPlus gps;
 static HardwareSerial gpsSerial(1);   // UART1
@@ -64,6 +84,14 @@ void gpsTask(void* pvParameters) {
     uint32_t sats  = gps.satellites.isValid() ? gps.satellites.value() : 0;
     uint32_t chars = gps.charsProcessed();
 
+    // Horário UTC do GPS -> epoch. Só vale se data E hora estiverem válidas
+    // e o ano for plausível (o módulo reporta 2000 antes de travar o tempo).
+    time_t epoch = 0;
+    if (gps.date.isValid() && gps.time.isValid() && gps.date.year() >= 2024) {
+      epoch = utcToEpoch(gps.date.year(), gps.date.month(), gps.date.day(),
+                         gps.time.hour(), gps.time.minute(), gps.time.second());
+    }
+
     {
       AppStateGuard guard;
 
@@ -79,6 +107,7 @@ void gpsTask(void* pvParameters) {
       g_state.altitude     = alt;
       g_state.satellites   = sats;
       g_state.gpsCharsSeen = chars;
+      g_state.gpsEpoch     = epoch;   // 0 se ainda sem data/hora válida
 
       if (changed) {
         g_state.dirty = true;

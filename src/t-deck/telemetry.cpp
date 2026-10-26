@@ -1,14 +1,15 @@
 #include "telemetry.h"
+#include "config.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include "secrets.h"   // WIFI_SSID, WIFI_PASSWORD, THINGSPEAK_WRITE_KEY
+#include <time.h>
+#include "secrets.h"   // WIFI_SSID, WIFI_PASSWORD, THINGSPEAK_WRITE_KEY, THINGSPEAK_CHANNEL_ID
 
-// Intervalo mínimo entre updates (plano gratuito do ThingSpeak ~15s).
-static const uint32_t TS_MIN_INTERVAL_MS = 16000;
+// Controle do intervalo mínimo entre bulks (plano gratuito: >= 15s).
 static uint32_t lastPostMs = 0;
 
 // Status para a UI.
-static uint32_t     postOkCount = 0;
+static uint32_t     postOkCount = 0;   // total de MEDIÇÕES gravadas (não de POSTs)
 static TsPostStatus lastStatus  = TsPostStatus::NONE;
 
 uint32_t     telemetryPostCount()  { return postOkCount; }
@@ -19,7 +20,7 @@ bool telemetryBegin() {
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   Serial.printf("[WiFi] Conectando a \"%s\"...\n", WIFI_SSID);
-  uint32_t until = millis() + 15000;   // tenta por ~15s
+  uint32_t until = millis() + CFG_WIFI_CONNECT_TIMEOUT_MS;
   while (WiFi.status() != WL_CONNECTED && millis() < until) {
     delay(250);
     Serial.print(".");
@@ -30,7 +31,7 @@ bool telemetryBegin() {
     Serial.printf("[WiFi] Conectado. IP: %s\n", WiFi.localIP().toString().c_str());
     return true;
   }
-  Serial.println("[WiFi] Falhou (segue sem telemetria).");
+  Serial.println("[WiFi] Falhou (segue bufferizando).");
   return false;
 }
 
@@ -38,105 +39,75 @@ bool telemetryWifiUp() {
   return WiFi.status() == WL_CONNECTED;
 }
 
-// Faz um update no ThingSpeak e retorna o entry_id.
-//   > 0  -> gravado com sucesso
-//   0    -> ThingSpeak RECUSOU (quase sempre rate limit: update < ~15s).
-//           ATENÇÃO: o HTTP ainda é 200 nesse caso! Só o body "0" denuncia.
-//   < 0  -> erro de rede/HTTP
-static long tsUpdate(const String& url) {
-  if (WiFi.status() != WL_CONNECTED) {
-    WiFi.reconnect();
-    return -1;
+bool telemetryCanFlush() {
+  return (lastPostMs == 0) || (millis() - lastPostMs >= CFG_FLUSH_INTERVAL_MS);
+}
+
+// Converte epoch UTC -> "YYYY-MM-DD HH:MM:SS +0000" (ISO aceito pelo TS).
+static String isoUtc(time_t ts) {
+  struct tm t;
+  gmtime_r(&ts, &t);
+  char b[32];
+  snprintf(b, sizeof(b), "%04d-%02d-%02d %02d:%02d:%02d +0000",
+           t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+           t.tm_hour, t.tm_min, t.tm_sec);
+  return String(b);
+}
+
+uint32_t telemetryBulkFlush(const Measurement* items, uint32_t n) {
+  if (n == 0 || items == nullptr) return 0;
+  if (WiFi.status() != WL_CONNECTED) { WiFi.reconnect(); return 0; }
+  if (!telemetryCanFlush()) return 0;          // respeita janela de 15s
+  if (n > CFG_BULK_MAX_POINTS) n = CFG_BULK_MAX_POINTS;
+
+  // Monta o corpo JSON do bulk-update manualmente (sem libs externas).
+  // { "write_api_key":"...", "updates":[ {created_at,field1..8,latitude,longitude}, ... ] }
+  String body;
+  body.reserve(n * 160 + 64);
+  body += "{\"write_api_key\":\"";
+  body += THINGSPEAK_WRITE_KEY;
+  body += "\",\"updates\":[";
+
+  for (uint32_t i = 0; i < n; i++) {
+    const Measurement& m = items[i];
+    if (i) body += ",";
+    body += "{\"created_at\":\"";
+    body += isoUtc(m.ts);
+    body += "\",\"field1\":" + String(m.rssiFwd);
+    body += ",\"field2\":"  + String(m.snrFwd, 1);
+    body += ",\"field3\":"  + String(m.rssiRev);
+    body += ",\"field4\":"  + String(m.snrRev, 1);
+    body += ",\"field5\":"  + String(m.seq);
+    body += ",\"field6\":"  + String(m.acks);
+    if (m.wpLabel >= 0) body += ",\"field7\":" + String(m.wpLabel);
+    body += ",\"latitude\":"  + String(m.lat, 6);
+    body += ",\"longitude\":" + String(m.lon, 6);
+    body += "}";
   }
+  body += "]}";
+
+  String url = "http://api.thingspeak.com/channels/";
+  url += String((unsigned long)THINGSPEAK_CHANNEL_ID);
+  url += "/bulk_update.json";
+
   HTTPClient http;
   http.begin(url);
-  int code = http.GET();
-  long entry = -1;
-  if (code == 200) {
-    String body = http.getString();  // ThingSpeak responde o entry_id (ou "0")
-    entry = body.toInt();
-  }
+  http.addHeader("Content-Type", "application/json");
+  int code = http.POST(body);
+  String resp = (code > 0) ? http.getString() : String();
   http.end();
-  return entry;
-}
 
-void telemetryPost(int rssiFwd, float snrFwd, int rssiRev, float snrRev,
-                   uint32_t seq, uint32_t acks,
-                   bool gpsFix, double lat, double lon) {
-  // Respeita o intervalo mínimo do plano gratuito.
-  uint32_t now = millis();
-  if (lastPostMs != 0 && (now - lastPostMs) < TS_MIN_INTERVAL_MS) return;
+  lastPostMs = millis();
 
-  String url = "http://api.thingspeak.com/update?api_key=";
-  url += THINGSPEAK_WRITE_KEY;
-  url += "&field1=" + String(rssiFwd);
-  url += "&field2=" + String(snrFwd, 1);
-  url += "&field3=" + String(rssiRev);
-  url += "&field4=" + String(snrRev, 1);
-  url += "&field5=" + String(seq);
-  url += "&field6=" + String(acks);
-  if (gpsFix) {
-    url += "&latitude="  + String(lat, 6);
-    url += "&longitude=" + String(lon, 6);
-  }
-
-  long entry = tsUpdate(url);
-  if (entry > 0) {
-    postOkCount++;
+  // Sucesso: resposta contém "success":true.
+  if (code == 202 || code == 200 || resp.indexOf("\"success\":true") >= 0) {
+    postOkCount += n;
     lastStatus = TsPostStatus::OK;
-    lastPostMs = millis();
-    Serial.printf("[TS] POST ok (entry=%ld)\n", entry);
-  } else if (entry == 0) {
-    // Recusado por rate limit: não atualiza lastPostMs para tentar de novo
-    // no próximo ciclo (quando a janela já tiver passado).
-    Serial.println("[TS] POST recusado (rate limit) - tentara de novo");
-  } else {
-    lastStatus = TsPostStatus::FAIL;
-    Serial.println("[TS] POST falhou (rede)");
-  }
-}
-
-bool telemetryPostWaypoint(uint8_t label, uint32_t wpCount,
-                           int rssiFwd, float snrFwd,
-                           bool gpsFix, double lat, double lon) {
-  // field7 = label; field8 = contador. Inclui RSSI/SNR de ida e posição.
-  String url = "http://api.thingspeak.com/update?api_key=";
-  url += THINGSPEAK_WRITE_KEY;
-  url += "&field1=" + String(rssiFwd);
-  url += "&field2=" + String(snrFwd, 1);
-  url += "&field7=" + String(label);
-  url += "&field8=" + String(wpCount);
-  if (gpsFix) {
-    url += "&latitude="  + String(lat, 6);
-    url += "&longitude=" + String(lon, 6);
+    Serial.printf("[TS] BULK ok: %lu medicoes (HTTP %d)\n", (unsigned long)n, code);
+    return n;
   }
 
-  // Uma MARCA é um evento importante: se o ThingSpeak recusar por rate limit
-  // (entry==0), aguardamos a janela e tentamos de novo (até ~3 vezes).
-  for (int attempt = 0; attempt < 3; attempt++) {
-    // Garante o intervalo mínimo desde o último update bem-sucedido.
-    uint32_t since = millis() - lastPostMs;
-    if (lastPostMs != 0 && since < TS_MIN_INTERVAL_MS) {
-      vTaskDelay(pdMS_TO_TICKS(TS_MIN_INTERVAL_MS - since));
-    }
-
-    long entry = tsUpdate(url);
-    if (entry > 0) {
-      postOkCount++;
-      lastStatus = TsPostStatus::OK;
-      lastPostMs = millis();
-      Serial.printf("[TS] WAYPOINT label=%u wp=%lu -> entry=%ld\n",
-                    label, (unsigned long)wpCount, entry);
-      return true;
-    } else if (entry == 0) {
-      Serial.printf("[TS] WAYPOINT recusado (rate limit), tentativa %d\n", attempt + 1);
-      // Força esperar uma janela inteira na próxima iteração.
-      lastPostMs = millis();
-    } else {
-      lastStatus = TsPostStatus::FAIL;
-      Serial.println("[TS] WAYPOINT falhou (rede)");
-      return false;
-    }
-  }
-  return false;
+  lastStatus = TsPostStatus::FAIL;
+  Serial.printf("[TS] BULK falhou (HTTP %d): %s\n", code, resp.c_str());
+  return 0;
 }

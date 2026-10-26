@@ -136,6 +136,18 @@ static void drawRangeTest(const AppState& s) {
     tft.print(wifiTxt);
     tft.setTextColor(tsCol, TFT_BLACK);
     tft.print(tsTxt);
+
+    // Segunda linha: buffer de medições aguardando envio.
+    //   0 -> cinza (tudo sincronizado); >0 -> amarelo; grande -> laranja.
+    char bufTxt[20];
+    snprintf(bufTxt, sizeof(bufTxt), "BUF:%lu", (unsigned long)s.bufCount);
+    uint16_t bufCol = (s.bufCount == 0) ? TFT_DARKGREY
+                    : (s.bufCount < 100) ? TFT_YELLOW
+                                         : TFT_ORANGE;
+    int16_t bwb = tft.textWidth(bufTxt);
+    tft.setCursor(tft.width() - bwb - 4, 16);
+    tft.setTextColor(bufCol, TFT_BLACK);
+    tft.print(bufTxt);
   }
 
   // Estado do último ping: verde se teve ACK, vermelho se não.
