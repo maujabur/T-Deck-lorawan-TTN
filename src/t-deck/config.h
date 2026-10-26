@@ -10,6 +10,14 @@
 //
 
 // ============================================================
+// RELÓGIO (exibição na tela)
+// ============================================================
+// Fuso horário para MOSTRAR o relógio do GPS na tela, em horas relativas
+// ao UTC. Brasília = -3. (Os dados enviados ao ThingSpeak continuam em UTC;
+// isto afeta só o relógio exibido.)
+#define CFG_TZ_OFFSET_HOURS            -3
+
+// ============================================================
 // RANGE TEST — cadência de medição e envio
 // ============================================================
 

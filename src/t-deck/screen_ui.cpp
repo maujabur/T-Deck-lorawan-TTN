@@ -4,6 +4,7 @@
 #include "battery.h"
 #include <TFT_eSPI.h>
 #ifdef TEST_LORA_RANGE
+#include "config.h"     // CFG_TZ_OFFSET_HOURS (relógio)
 #include "keyboard.h"   // teclado (waypoints) + trackball (reconexão WiFi)
 #endif
 #ifdef RANGE_TELEMETRY
@@ -214,9 +215,11 @@ static void drawRangeTest(const AppState& s) {
 
   // Relógio (canto direito do bloco GPS), a partir do epoch do GPS.
   if (s.gpsEpoch > 0) {
-    struct tm t; time_t ep = s.gpsEpoch; gmtime_r(&ep, &t);
+    // Aplica o fuso de exibição (CFG_TZ_OFFSET_HOURS) ao epoch UTC do GPS.
+    time_t ep = s.gpsEpoch + (time_t)CFG_TZ_OFFSET_HOURS * 3600;
+    struct tm t; gmtime_r(&ep, &t);
     char clk[12];
-    snprintf(clk, sizeof(clk), "%02d:%02d:%02d UTC", t.tm_hour, t.tm_min, t.tm_sec);
+    snprintf(clk, sizeof(clk), "%02d:%02d:%02d", t.tm_hour, t.tm_min, t.tm_sec);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     int16_t cw = tft.textWidth(clk);
     tft.setCursor(tft.width() - cw - 6, 150);

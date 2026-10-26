@@ -35,16 +35,54 @@ static float    battVolts      = 0.0f; // tensão lida periodicamente
 
 // Liga/desliga o painel OLED (comando do controlador; não mexe no Vext,
 // para o rádio seguir funcionando).
-// Flash rápido de texto grande centralizado (feedback visual).
+// Imprime uma linha centralizada horizontalmente, no y dado.
+static void printCentered(const char* line, int16_t y) {
+  int16_t x1, y1; uint16_t w, h;
+  display.getTextBounds(line, 0, y, &x1, &y1, &w, &h);
+  int16_t x = ((int16_t)display.width() - (int16_t)w) / 2;
+  if (x < 0) x = 0;
+  display.setCursor(x, y);
+  display.print(line);
+}
+
+// Flash rápido de feedback. Quebra a mensagem por espaços (uma palavra por
+// linha) e centraliza cada linha — em retrato (64px) "SCREEN OFF" não cabe
+// numa linha só, então vira duas linhas limpas em vez de cortado no meio.
 static void flashMessage(const char* msg, uint16_t ms) {
   display.clearDisplay();
-  display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
-  // Centraliza aproximadamente (fonte 2 = ~12px/char).
-  int16_t x = (display.width() - (int16_t)strlen(msg) * 12) / 2;
-  if (x < 0) x = 0;
-  display.setCursor(x, (display.height() - 16) / 2);
-  display.print(msg);
+
+  // Escolhe o tamanho da fonte pela MAIOR palavra: se alguma palavra não
+  // couber na largura em fonte 2 (~12px/char), usa fonte 1 (~6px/char).
+  char tmp[32];
+  strncpy(tmp, msg, sizeof(tmp) - 1);
+  tmp[sizeof(tmp) - 1] = '\0';
+
+  int nLines = 1, maxWord = 0, cur = 0;
+  for (char* p = tmp; ; p++) {
+    if (*p == ' ' || *p == '\0') {
+      if (cur > maxWord) maxWord = cur;
+      cur = 0;
+      if (*p == ' ') nLines++;
+      if (*p == '\0') break;
+    } else cur++;
+  }
+  uint8_t sz = (maxWord * 12 <= (int)display.width()) ? 2 : 1;
+  display.setTextSize(sz);
+  const int16_t lineH = (sz == 2) ? 18 : 10;
+
+  int16_t y = ((int16_t)display.height() - nLines * lineH) / 2;
+  if (y < 0) y = 0;
+
+  strncpy(tmp, msg, sizeof(tmp) - 1);   // strtok consome; recarrega
+  tmp[sizeof(tmp) - 1] = '\0';
+  char* tok = strtok(tmp, " ");
+  while (tok) {
+    printCentered(tok, y);
+    y += lineH;
+    tok = strtok(nullptr, " ");
+  }
+
   display.display();
   delay(ms);
   display.setTextSize(1);
