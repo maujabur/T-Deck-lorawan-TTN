@@ -52,6 +52,11 @@ struct AppState {
   int      rtRssiRev     = 0;       // RSSI de VOLTA (medido pelo T-Deck no ACK)
   float    rtSnrRev      = 0.0f;    // SNR de VOLTA
   uint32_t rtLastAckMs   = 0;       // millis() do último ACK recebido
+  uint32_t rtStaleMs     = 10000;   // idade do último ACK acima da qual a UI
+                                    // mostra "SEM ACK". Ajustado pela loraTask
+                                    // conforme a cadência (online x offline),
+                                    // para não acusar perda só porque o loop
+                                    // ficou mais lento offline.
 
   // ---- Telemetria WiFi/ThingSpeak (modo RANGE_TELEMETRY) ----
   bool     tsEnabled     = false;   // telemetria compilada/ativa neste firmware

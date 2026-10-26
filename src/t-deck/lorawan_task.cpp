@@ -108,6 +108,19 @@ void loraTask(void* pvParameters) {
     char ping[24];
     rangeMakePing(ping, sizeof(ping), seq);
 
+    // Cadência de medição desta iteração: mais rápida online, mais lenta
+    // offline. Calculada no topo para também derivar o limiar de "SEM ACK".
+#ifdef RANGE_TELEMETRY
+    uint32_t waitMs = telemetryWifiUp() ? CFG_MEAS_INTERVAL_ONLINE_MS
+                                        : CFG_MEAS_INTERVAL_OFFLINE_MS;
+#else
+    uint32_t waitMs = CFG_MEAS_INTERVAL_ONLINE_MS;
+#endif
+    // A tela mostra "SEM ACK" quando o último ACK passa deste limiar. Usamos
+    // ~2,25x a cadência: cobre um ping perdido com folga, sem acusar perda só
+    // porque offline o loop é mais lento (16s > 10s fixos de antes).
+    uint32_t staleMs = waitMs * 2 + waitMs / 4;
+
     bool  gotAck   = false;
     int   rssiFwd  = 0;      // IDA (vem no ACK)
     float snrFwd   = 0.0f;
@@ -162,6 +175,7 @@ void loraTask(void* pvParameters) {
         g_state.rtLastAckMs = millis();
       }
       g_state.phase = gotAck ? LoRaWANPhase::JOINED : LoRaWANPhase::WAITING;
+      g_state.rtStaleMs = staleMs;   // limiar de "SEM ACK" conforme a cadência
       g_state.dirty = true;
 
       fix   = g_state.gpsFix;  lat = g_state.latitude; lon = g_state.longitude;
@@ -214,13 +228,7 @@ void loraTask(void* pvParameters) {
     }
 #endif
 
-    // Cadência de medição: mais rápida online, mais lenta offline.
-#ifdef RANGE_TELEMETRY
-    uint32_t waitMs = telemetryWifiUp() ? CFG_MEAS_INTERVAL_ONLINE_MS
-                                        : CFG_MEAS_INTERVAL_OFFLINE_MS;
-#else
-    uint32_t waitMs = CFG_MEAS_INTERVAL_ONLINE_MS;
-#endif
+    // Aguarda até a próxima medição (cadência calculada no topo do loop).
     vTaskDelay(pdMS_TO_TICKS(waitMs));
   }
 #endif

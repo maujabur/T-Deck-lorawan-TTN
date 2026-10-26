@@ -191,7 +191,9 @@ static void drawRangeTestTo(Canvas& tft, const AppState& s) {
 
   // Estado do último ping: verde se teve ACK, vermelho se não.
   uint32_t ageMs = (s.rtLastAckMs > 0) ? (millis() - s.rtLastAckMs) : 0;
-  bool linkUp = s.rtGotAck && (s.rtLastAckMs > 0) && (ageMs < 10000);
+  // O limiar de "SEM ACK" (rtStaleMs) acompanha a cadência de medição: offline
+  // o loop pinga a cada 16s, então não faz sentido acusar perda aos 10s fixos.
+  bool linkUp = s.rtGotAck && (s.rtLastAckMs > 0) && (ageMs < s.rtStaleMs);
 
   // ENLACE OK em verde sobre preto; SEM ACK em branco sobre faixa vermelha,
   // para chamar atenção de relance no campo. Agora que o double buffering
