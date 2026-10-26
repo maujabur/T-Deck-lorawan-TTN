@@ -111,8 +111,14 @@
       <button class="pst" data-min="360">6 horas</button>
       <button class="pst" data-min="1440">24 horas</button>
       <button class="pst" data-min="10080">7 dias</button>
-      <button class="pst sel" data-n="500">Últimos 500</button>
+      <button class="pst sel" data-nfield="1">Últimas N</button>
       <button class="pst" data-custom="1">Datas…</button>
+    </div>
+
+    <div id="box-n" class="row">
+      <label style="margin:0;flex:1;">N leituras
+        <input id="nReads" type="number" min="1" max="8000" step="1" value="500" />
+      </label>
     </div>
 
     <div id="box-range" style="display:none">
@@ -191,6 +197,14 @@
     let animTimer = null;
     let didInitialFit = false; // só enquadra o mapa na 1a carga
 
+    // Controle do auto-refresh (checkbox "auto 20s"). Guardamos o estado
+    // desejado separado do timer, para poder PAUSAR durante a animação sem
+    // perder a intenção do usuário.
+    const AUTO_MS = 20000;
+    let autoWanted = false;
+    function startAuto() { if (!autoTimer) autoTimer = setInterval(load, AUTO_MS); }
+    function stopAuto()  { if (autoTimer) { clearInterval(autoTimer); autoTimer = null; } }
+
     const $ = id => document.getElementById(id);
 
     function rssiColor(rssi) {
@@ -227,6 +241,13 @@
     rangeStart = hourAgo; rangeEnd = now;   // valores iniciais
 
     // Presets de período (um clique). O "Datas…" revela o intervalo manual.
+    function readN() {
+      let n = parseInt($('nReads').value, 10);
+      if (isNaN(n) || n < 1) n = 500;
+      if (n > 8000) n = 8000;          // teto do ThingSpeak feeds.json
+      return n;
+    }
+
     document.querySelectorAll('#presets .pst').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('#presets .pst').forEach(b => b.classList.remove('sel'));
@@ -234,16 +255,24 @@
         if (btn.dataset.custom) {
           filter = { kind: 'range' };
           $('box-range').style.display = '';
+          $('box-n').style.display = 'none';
           return;              // escolhe início/fim e clica "Aplicar intervalo"
         } else if (btn.dataset.min) {
           filter = { kind: 'minutes', minutes: parseInt(btn.dataset.min) };
           $('box-range').style.display = 'none';
-        } else if (btn.dataset.n) {
-          filter = { kind: 'n', n: parseInt(btn.dataset.n) };
+          $('box-n').style.display = 'none';
+        } else if (btn.dataset.nfield) {
+          filter = { kind: 'n', n: readN() };
           $('box-range').style.display = 'none';
+          $('box-n').style.display = '';
         }
         load();   // carrega na hora ao escolher o período
       });
+    });
+
+    // Recarrega ao mudar o N (quando o filtro de quantidade está ativo).
+    $('nReads').addEventListener('change', () => {
+      if (filter.kind === 'n') { filter.n = readN(); load(); }
     });
 
     // Converte um objeto Date -> formato que o ThingSpeak aceita (UTC).
@@ -260,6 +289,9 @@
       if (filter.kind === 'n') {
         url += `&results=${filter.n || 500}`;
       } else if (filter.kind === 'minutes') {
+        // Janela DESLIZANTE (por design): 'minutes' é relativo ao AGORA, então
+        // a cada refresh pontos antigos saem pela borda de trás e novos entram
+        // pela frente. Por isso o total pode variar entre refreshes — esperado.
         url += `&minutes=${filter.minutes || 60}`;
       } else if (filter.kind === 'range') {
         const s = toTsTime(rangeStart);
@@ -295,8 +327,13 @@
       });
 
       let wp = feeds.filter(f => f.field7 !== null && f.field7 !== undefined).length;
+      // Mostra o nº de pontos PLOTADOS (com GPS) em destaque — é o mesmo que
+      // o slider usa — e o total bruto recebido entre parênteses, para não
+      // parecer que a contagem "dança" entre painel e timeline.
       stats.innerHTML =
-        `<b>${data.feeds.length}</b> leituras, <b>${feeds.length}</b> com GPS, ` +
+        `<b>${feeds.length}</b> pontos no mapa ` +
+        `<span style="color:var(--muted)">(${data.feeds.length} leituras, ` +
+        `${data.feeds.length - feeds.length} sem GPS)</span>, ` +
         `<b>${wp}</b> waypoints.` +
         (data.channel ? `<br>Canal: <b>${data.channel.name||''}</b>` : '');
 
@@ -365,9 +402,14 @@
     // ---- Animação ----
     function stopAnim() {
       if (animTimer) { clearInterval(animTimer); animTimer = null; $('playBtn').innerHTML = '&#9654;'; }
+      // Terminou/parou a animação: se o usuário tinha ligado o auto, retoma.
+      if (autoWanted) startAuto();
     }
     function startAnim() {
       if (feeds.length < 2) return;
+      // Enquanto anima, PAUSA o auto-refresh para ele não recarregar os feeds
+      // e jogar o scrubber para o fim no meio da animação (bug do "pulo").
+      stopAuto();
       let i = parseInt($('scrub').value) || 0;
       if (i >= feeds.length - 1) i = 0;  // reinicia se estava no fim
       $('playBtn').innerHTML = '&#10073;&#10073;'; // pause
@@ -394,8 +436,15 @@
       load();
     });
     $('auto').addEventListener('change', (e) => {
-      if (e.target.checked) { load(); autoTimer = setInterval(load, 20000); }
-      else { clearInterval(autoTimer); autoTimer = null; }
+      autoWanted = e.target.checked;
+      if (autoWanted) {
+        load();
+        // Só arranca o timer se não houver animação tocando (senão ela
+        // seria atropelada pelo refresh). Volta sozinho quando a animação para.
+        if (!animTimer) startAuto();
+      } else {
+        stopAuto();
+      }
     });
 
     load();
