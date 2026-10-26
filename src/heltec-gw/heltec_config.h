@@ -31,6 +31,10 @@
 // 0 = desativa o auto-sleep do display.
 #define HCFG_DISPLAY_TIMEOUT_MS    60000UL
 
+// Duração dos flashes de feedback na tela (SCREEN ON/OFF, WAKE, SLEEP), em ms.
+// Valor único para todos, por simetria.
+#define HCFG_FLASH_MS              500
+
 // ============================================================
 // BATERIA (leitura de tensão)
 // ============================================================

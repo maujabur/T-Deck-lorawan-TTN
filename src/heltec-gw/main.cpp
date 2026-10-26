@@ -45,6 +45,9 @@ static void printCentered(const char* line, int16_t y) {
   display.print(line);
 }
 
+// Forward: setDisplayOn() redesenha a tela ao ligar; a definição vem depois.
+static void drawScreen(const char* statusLine);
+
 // Flash rápido de feedback. Quebra a mensagem por espaços (uma palavra por
 // linha) e centraliza cada linha — em retrato (64px) "SCREEN OFF" não cabe
 // numa linha só, então vira duas linhas limpas em vez de cortado no meio.
@@ -93,13 +96,19 @@ static void flashMessage(const char* msg, uint16_t ms) {
 static void setDisplayOn(bool on, const char* reason = nullptr) {
   if (!on) {
     // Vai apagar: mostra o motivo por um instante, depois desliga o painel.
-    if (reason) flashMessage(reason, 700);
+    if (reason) flashMessage(reason, HCFG_FLASH_MS);
     display.ssd1306_command(SSD1306_DISPLAYOFF);
   } else {
-    // Vai ligar: liga o painel e dá um flash rápido de "WAKE".
+    // Vai ligar: liga o painel, dá o flash de feedback e já redesenha a tela
+    // de status na hora. Sem este redraw imediato, o "SCREEN ON" ficava
+    // congelado até o próximo ciclo da loop() (que espera o rádio), parecendo
+    // mais longo que os outros flashes.
     display.ssd1306_command(SSD1306_DISPLAYON);
-    if (reason) flashMessage(reason, 400);
+    if (reason) flashMessage(reason, HCFG_FLASH_MS);
     lastActivityMs = millis();
+    displayOn = on;
+    drawScreen("Escutando");
+    return;
   }
   displayOn = on;
 }
@@ -188,6 +197,14 @@ static void drawScreen(const char* statusLine) {
     const char* comma = strchr(lastMsg.c_str(), ',');
     snprintf(buf, sizeof(buf), "%s", comma ? comma + 1 : lastMsg.c_str());
     printRight(59, buf);
+
+    // Conteúdo bruto do último pacote, abaixo do Seq. Pode enrolar para a
+    // próxima linha (textWrap default) se for longo — tudo bem, cabe até o
+    // rodapé da bateria.
+    display.setCursor(0, 71);
+    display.print("Msg:");
+    display.setCursor(0, 81);
+    display.print(lastMsg);
   } else {
     display.setCursor(0, 35);
     display.println(statusLine);
@@ -218,7 +235,7 @@ void setup() {
     display.setRotation(HCFG_DISPLAY_ROTATION);   // retrato para o case em pé
     // Se acordou de deep sleep (botão), dá um flash de "WAKE".
     if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
-      flashMessage("WAKE", 500);
+      flashMessage("WAKE", HCFG_FLASH_MS);
     }
     drawScreen("Iniciando");
   }
@@ -266,7 +283,7 @@ void loop() {
     // Garante o painel ligado para o flash "SLEEP" aparecer mesmo quando a
     // tela já estava apagada (senão o sleep ficava sem feedback nenhum).
     display.ssd1306_command(SSD1306_DISPLAYON);
-    flashMessage("SLEEP", 800);                  // feedback antes de dormir
+    flashMessage("SLEEP", HCFG_FLASH_MS);        // feedback antes de dormir
     display.clearDisplay(); display.display();
     radio.sleep();
     powerDeepSleep();   // não retorna; acorda pelo botão (reboot)
@@ -285,7 +302,10 @@ void loop() {
       lastMsg  = msg;
       lastRssi = radio.getRSSI();
       lastSnr  = radio.getSNR();
-      lastActivityMs = millis();   // atividade: reinicia o timeout do display
+      // NÃO reinicia o timeout do display aqui: o auto-sleep conta só a partir
+      // da última interação do BOTÃO. Durante um range test o T-Deck pinga a
+      // cada poucos segundos; se o tráfego de rádio contasse como atividade, o
+      // OLED nunca apagaria. Com a tela apagada o rádio/ACK seguem normais.
 
       uint32_t seq = 0;
       if (rangeParsePing(msg.c_str(), &seq)) {
