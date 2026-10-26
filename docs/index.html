@@ -214,6 +214,16 @@
       return '#e74c3c';
     }
 
+    // Escurece um hex (#rrggbb) por um fator (0..1). Usado para a borda dos
+    // pontos: em vez do preto duro, a borda acompanha a cor do preenchimento,
+    // um pouco mais escura — define o disco sem pesar o rastro.
+    function darken(hex, f) {
+      const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+      if (!m) return hex;
+      const d = x => Math.round(parseInt(x, 16) * f).toString(16).padStart(2, '0');
+      return `#${d(m[1])}${d(m[2])}${d(m[3])}`;
+    }
+
     // Painel recolhível.
     $('toggle').addEventListener('click', () => $('panel').classList.toggle('hidden'));
     // No desktop (tela larga), abre por padrão.
@@ -373,14 +383,17 @@
         const isLast = (i === count - 1);
 
         if (label != null) {
+          // Waypoint: mantém a borda branca de propósito, para destacar.
           L.circleMarker([lat, lon], {
             radius: 9, color:'#fff', weight:2, fillColor:'#2b6cb0', fillOpacity:op
           }).bindPopup(popupFor(f)).addTo(layer);
         } else {
+          // Ponto normal: borda = cor do preenchimento escurecida (~65%),
+          // em vez do preto duro, para o rastro ficar mais leve.
+          const fill = rssiColor(f.field1!=null?parseInt(f.field1):null);
           L.circleMarker([lat, lon], {
-            radius: isLast ? 7 : 5, color:'#000', weight:1,
-            fillColor: rssiColor(f.field1!=null?parseInt(f.field1):null),
-            fillOpacity: op
+            radius: isLast ? 7 : 5, color: darken(fill, 0.65), weight:1,
+            fillColor: fill, fillOpacity: op, opacity: op
           }).bindPopup(popupFor(f)).addTo(layer);
         }
       }
