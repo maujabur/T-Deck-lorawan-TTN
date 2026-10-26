@@ -220,7 +220,7 @@ void setup() {
     if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
       flashMessage("WAKE", 500);
     }
-    drawScreen("Iniciando radio...");
+    drawScreen("Iniciando");
   }
 
   // 2) SPI do rádio (barramento dedicado do Heltec).
@@ -233,7 +233,7 @@ void setup() {
                            HELTEC_RADIO_PREAMBLE);
   if (st != RADIOLIB_ERR_NONE) {
     Serial.printf("[GW] radio.begin falhou: %d\n", st);
-    drawScreen("ERRO no radio!");
+    drawScreen("ERRO radio");
     while (true) { delay(1000); }
   }
 
@@ -249,7 +249,7 @@ void setup() {
   lastActivityMs = millis();
 
   Serial.println("[GW] Escutando...");
-  drawScreen("Escutando...");
+  drawScreen("Escutando");
 }
 
 void loop() {
@@ -263,7 +263,10 @@ void loop() {
   } else if (be == BtnEvent::LONG) {
     // Pressão longa: deep sleep (ultra econômico). Desliga rádio e OLED.
     Serial.println("[PWR] Entrando em deep sleep...");
-    if (displayOn) flashMessage("SLEEP", 800);   // feedback antes de dormir
+    // Garante o painel ligado para o flash "SLEEP" aparecer mesmo quando a
+    // tela já estava apagada (senão o sleep ficava sem feedback nenhum).
+    display.ssd1306_command(SSD1306_DISPLAYON);
+    flashMessage("SLEEP", 800);                  // feedback antes de dormir
     display.clearDisplay(); display.display();
     radio.sleep();
     powerDeepSleep();   // não retorna; acorda pelo botão (reboot)
@@ -317,7 +320,7 @@ void loop() {
     // estão errados (ou não há bateria conectada).
     Serial.printf("[BAT] raw=%.0f mV  -> %.2f V (fator %.2f)\n",
                   rawMv, battVolts, HCFG_VBAT_FACTOR);
-    if (displayOn) drawScreen("Escutando...");
+    if (displayOn) drawScreen("Escutando");
   }
 
   // ---- Auto-sleep do display por inatividade ----
