@@ -214,6 +214,25 @@
       return '#e74c3c';
     }
 
+    // Fuso de EXIBIÇÃO (horas relativas ao UTC). Brasília = -3. O ThingSpeak
+    // guarda tudo em UTC; convertemos só na hora de mostrar (slider e popups).
+    const TZ_OFFSET_HOURS = -3;
+
+    // Converte o created_at do ThingSpeak (UTC, ex.: "2026-10-23T19:40:59Z")
+    // para o fuso de exibição e devolve { date:"DD/MM", time:"HH:MM:SS" }.
+    function localParts(createdAt) {
+      if (!createdAt) return { date: '', time: '' };
+      const t = Date.parse(createdAt);            // epoch ms (interpreta o Z)
+      if (isNaN(t)) return { date: '', time: createdAt };
+      const d = new Date(t + TZ_OFFSET_HOURS * 3600 * 1000);
+      const p = n => String(n).padStart(2, '0');
+      // Usa getUTC* no Date já deslocado -> evita o fuso do navegador interferir.
+      return {
+        date: `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}`,
+        time: `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`,
+      };
+    }
+
     // Escurece um hex (#rrggbb) por um fator (0..1). Usado para a borda dos
     // pontos: em vez do preto duro, a borda acompanha a cor do preenchimento,
     // um pouco mais escura — define o disco sem pesar o rastro.
@@ -360,7 +379,8 @@
 
     function popupFor(f) {
       const label = f.field7;
-      return `<b>entry ${f.entry_id}</b><br>${f.created_at}<br>` +
+      const lp = localParts(f.created_at);
+      return `<b>entry ${f.entry_id}</b><br>${lp.date} ${lp.time} (GMT${TZ_OFFSET_HOURS})<br>` +
         `RSSI ida: ${f.field1 ?? '-'} dBm<br>SNR ida: ${f.field2 ?? '-'} dB<br>` +
         `RSSI volta: ${f.field3 ?? '-'} dBm<br>seq/acks: ${f.field5 ?? '-'} / ${f.field6 ?? '-'}` +
         (label != null ? `<br><b>WAYPOINT: rótulo ${label}</b>` : '');
@@ -400,10 +420,10 @@
       if (track.length > 1)
         L.polyline(track, { color:'#2b6cb0', weight:2, opacity:0.4 }).addTo(layer);
 
-      // Info da animação.
+      // Info da animação (hora no fuso de exibição GMT-3).
       if (count > 0) {
         const f = feeds[count-1];
-        $('animInfo').textContent = `${count}/${feeds.length} · ${(f.created_at||'').slice(11,19)}`;
+        $('animInfo').textContent = `${count}/${feeds.length} · ${localParts(f.created_at).time}`;
       }
     }
 
