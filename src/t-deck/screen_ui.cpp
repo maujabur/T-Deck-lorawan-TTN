@@ -4,7 +4,11 @@
 #include "battery.h"
 #include <TFT_eSPI.h>
 #ifdef TEST_LORA_RANGE
-#include "keyboard.h"   // marcar waypoints com o teclado
+#include "config.h"     // CFG_TZ_OFFSET_HOURS (relógio)
+#include "keyboard.h"   // teclado (waypoints) + trackball (reconexão WiFi)
+#endif
+#ifdef RANGE_TELEMETRY
+#include "telemetry.h"  // telemetryForceReconnect()
 #endif
 
 #ifdef TEST_LORA_RANGE
@@ -31,6 +35,11 @@ static int wpLabelForKey(char c) {
 
 // A tela é privada deste módulo. Só a uiTask mexe nela => sem corrida.
 static TFT_eSPI tft = TFT_eSPI();
+
+// Double buffering: desenhamos tudo neste sprite (buffer na PSRAM) e depois
+// empurramos pronto para a tela de uma vez -> sem "piscada" de redraw.
+static TFT_eSprite spr = TFT_eSprite(&tft);
+static bool spriteOK = false;
 
 // Instância SPI (HSPI) do display, reaproveitada pelo rádio.
 SPIClass& screenGetSPI() {
@@ -93,9 +102,19 @@ void screenInit() {
   tft.setCursor(10, 20);
   tft.println("=== T-DECK SCANNER ===");
 
+  // Cria o sprite de double buffering (na PSRAM: 320x240x2 = ~150KB).
+  spr.setColorDepth(16);
+  // Se faltar memória, spriteOK=false e desenhamos direto no tft (com flicker).
+  void* sprBuf = spr.createSprite(tft.width(), tft.height());
+  spriteOK = (sprBuf != nullptr);
+  Serial.printf("[UI] sprite %s (buf=%p)  PSRAM free=%u  heap free=%u\n",
+                spriteOK ? "OK" : "FALHOU", sprBuf,
+                (unsigned)ESP.getFreePsram(), (unsigned)ESP.getFreeHeap());
+
 #ifdef TEST_LORA_RANGE
-  // Inicializa o teclado para marcar waypoints durante o range test.
+  // Teclado (waypoints) + trackball (clique força reconexão WiFi).
   keyboardInit();
+  trackballInit();
 #endif
 }
 
@@ -105,8 +124,17 @@ void screenInit() {
 // Tela dedicada do range test: números grandes e legíveis para olhar de
 // relance andando. Mostra IDA (medido pelo Heltec) e VOLTA (medido aqui),
 // taxa de ACK e há quanto tempo foi o último ACK.
-static void drawRangeTest(const AppState& s) {
-  tft.fillScreen(TFT_BLACK);
+// Corpo do desenho do range test, parametrizado pelo "canvas" (TFT_eSprite
+// quando há double buffering, ou TFT_eSPI direto como fallback). Usamos
+// template para que os métodos de desenho resolvam no tipo CONCRETO do canvas
+// (métodos não-virtuais) — sem casts para a base, que mandariam o desenho
+// para a tela real e deixariam resíduos.
+template <typename Canvas>
+static void drawRangeTestTo(Canvas& tft, const AppState& s) {
+  // Limpa o frame inteiro com fillRect (mesmo caminho testado do fillRect
+  // vermelho). Usamos isto em vez de fillScreen para garantir que a faixa do
+  // "SEM ACK" de um frame anterior seja sempre apagada.
+  tft.fillRect(0, 0, tft.width(), tft.height(), TFT_BLACK);
 
   // Cabeçalho
   tft.setTextSize(2);
@@ -128,14 +156,25 @@ static void drawRangeTest(const AppState& s) {
     uint16_t tsCol = (s.tsLastStatus == 1) ? TFT_GREEN
                    : (s.tsLastStatus == 2) ? TFT_RED
                                            : TFT_DARKGREY;
-    int16_t wW = tft.textWidth(wifiTxt);
-    int16_t tW = tft.textWidth(tsTxt);
-    int16_t x0 = tft.width() - (wW + tW) - 4;
-    tft.setCursor(x0, 4);
-    tft.setTextColor(wifiCol, TFT_BLACK);
-    tft.print(wifiTxt);
-    tft.setTextColor(tsCol, TFT_BLACK);
-    tft.print(tsTxt);
+    // Se o usuário pediu reconexão há pouco (trackball), mostra "RECONECTANDO"
+    // em vez do indicador normal, por ~3s.
+    uint32_t rcAge = (s.wifiReconnectMs > 0) ? (millis() - s.wifiReconnectMs) : 0xFFFFFFFF;
+    if (s.wifiReconnectMs > 0 && rcAge < 3000) {
+      const char* rc = "RECONECTANDO";
+      tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+      int16_t rw = tft.textWidth(rc);
+      tft.setCursor(tft.width() - rw - 4, 4);
+      tft.print(rc);
+    } else {
+      int16_t wW = tft.textWidth(wifiTxt);
+      int16_t tW = tft.textWidth(tsTxt);
+      int16_t x0 = tft.width() - (wW + tW) - 4;
+      tft.setCursor(x0, 4);
+      tft.setTextColor(wifiCol, TFT_BLACK);
+      tft.print(wifiTxt);
+      tft.setTextColor(tsCol, TFT_BLACK);
+      tft.print(tsTxt);
+    }
 
     // Segunda linha: buffer de medições aguardando envio.
     //   0 -> cinza (tudo sincronizado); >0 -> amarelo; grande -> laranja.
@@ -152,18 +191,21 @@ static void drawRangeTest(const AppState& s) {
 
   // Estado do último ping: verde se teve ACK, vermelho se não.
   uint32_t ageMs = (s.rtLastAckMs > 0) ? (millis() - s.rtLastAckMs) : 0;
-  bool linkUp = s.rtGotAck && (s.rtLastAckMs > 0) && (ageMs < 10000);
+  // O limiar de "SEM ACK" (rtStaleMs) acompanha a cadência de medição: offline
+  // o loop pinga a cada 16s, então não faz sentido acusar perda aos 10s fixos.
+  bool linkUp = s.rtGotAck && (s.rtLastAckMs > 0) && (ageMs < s.rtStaleMs);
 
-  // ENLACE OK em verde; SEM ACK em vermelho brilhante com fundo, para
-  // chamar atenção de relance no campo.
+  // ENLACE OK em verde sobre preto; SEM ACK em branco sobre faixa vermelha,
+  // para chamar atenção de relance no campo. Agora que o double buffering
+  // funciona de verdade (desenhamos no sprite e empurramos pronto), a faixa
+  // de fundo não deixa mais resíduo.
   tft.setTextSize(3);
   if (linkUp) {
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setCursor(10, 30);
     tft.print("ENLACE OK");
   } else {
-    // Faixa vermelha preenchida com texto branco = alto contraste.
-    tft.fillRect(0, 28, tft.width(), 30, TFT_RED);
+    tft.fillRect(0, 28, tft.width(), 26, TFT_RED);
     tft.setTextColor(TFT_WHITE, TFT_RED);
     tft.setCursor(10, 30);
     tft.print("SEM ACK");
@@ -193,9 +235,23 @@ static void drawRangeTest(const AppState& s) {
   tft.setCursor(10, 118);
   tft.printf("VOLTA R%d S%.1f", s.rtRssiRev, s.rtSnrRev);
 
-  // GPS (coords para marcar no mapa de alcance)
+  // GPS (coords para marcar no mapa de alcance) + relógio UTC do GPS.
   tft.drawFastHLine(0, 142, tft.width(), TFT_DARKGREY);
   tft.setTextSize(1);
+
+  // Relógio (canto direito do bloco GPS), a partir do epoch do GPS.
+  if (s.gpsEpoch > 0) {
+    // Aplica o fuso de exibição (CFG_TZ_OFFSET_HOURS) ao epoch UTC do GPS.
+    time_t ep = s.gpsEpoch + (time_t)CFG_TZ_OFFSET_HOURS * 3600;
+    struct tm t; gmtime_r(&ep, &t);
+    char clk[12];
+    snprintf(clk, sizeof(clk), "%02d:%02d:%02d", t.tm_hour, t.tm_min, t.tm_sec);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    int16_t cw = tft.textWidth(clk);
+    tft.setCursor(tft.width() - cw - 6, 150);
+    tft.print(clk);
+  }
+
   if (s.gpsFix) {
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setCursor(10, 150);
@@ -233,14 +289,25 @@ static void drawRangeTest(const AppState& s) {
                     (unsigned long)s.wpCount);
   }
 }
+
+// Escolhe o canvas: sprite (double buffering) quando disponível, senão a tela
+// real como fallback. Depois empurra o buffer pronto de uma vez.
+static void drawRangeTest(const AppState& s) {
+  if (spriteOK) {
+    drawRangeTestTo(spr, s);
+    spr.pushSprite(0, 0);
+  } else {
+    drawRangeTestTo(tft, s);
+  }
+}
 #endif // TEST_LORA_RANGE
 
-static void drawFromSnapshot(const AppState& s) {
-#ifdef TEST_LORA_RANGE
-  drawRangeTest(s);
-  return;
-#endif
-  tft.fillScreen(TFT_BLACK);
+// Corpo do scanner, parametrizado pelo canvas (ver nota em drawRangeTestTo).
+template <typename Canvas>
+static void drawScannerTo(Canvas& tft, const AppState& s) {
+  // Limpa o frame inteiro com fillRect (ver nota em drawRangeTestTo: o
+  // fillScreen no sprite não zerava o buffer de forma confiável nesta versão).
+  tft.fillRect(0, 0, tft.width(), tft.height(), TFT_BLACK);
 
   // Cabeçalho
   tft.setTextSize(2);
@@ -317,6 +384,20 @@ static void drawFromSnapshot(const AppState& s) {
   }
 }
 
+static void drawFromSnapshot(const AppState& s) {
+#ifdef TEST_LORA_RANGE
+  drawRangeTest(s);
+  return;
+#endif
+  // Double buffering: desenha no sprite e empurra; fallback desenha direto.
+  if (spriteOK) {
+    drawScannerTo(spr, s);
+    spr.pushSprite(0, 0);
+  } else {
+    drawScannerTo(tft, s);
+  }
+}
+
 void uiTask(void* pvParameters) {
   (void)pvParameters;
 
@@ -328,6 +409,19 @@ void uiTask(void* pvParameters) {
     // marca (com lat/lon) no próximo POST; a tela mostra um aviso.
     {
       char key = keyboardRead();
+
+      // Tecla 'B': liga/desliga o backlight (tela escura p/ economia no campo).
+      // Só mexe no pino do backlight; ao religar, forçamos um repaint.
+      if (key == 'B' || key == 'b') {
+        bool turnOn = !boardBacklightIsOn();
+        boardBacklight(turnOn);
+        if (turnOn) {
+          AppStateGuard guard;
+          g_state.dirty = true;   // repinta o frame atual ao reacender
+        }
+        key = 0;                  // consome a tecla (não vira waypoint)
+      }
+
       int label = (key != 0) ? wpLabelForKey(key) : -1;
       if (label >= 0) {
         AppStateGuard guard;
@@ -336,6 +430,19 @@ void uiTask(void* pvParameters) {
         g_state.wpLastMs    = millis();
         g_state.wpPending   = true;   // a loraTask/telemetria consome
         g_state.dirty       = true;
+      }
+
+      // Clique do trackball: força reconexão do WiFi (útil quando o hotspot
+      // voltou mas o ESP não reconectou sozinho).
+      TrackballDir tb = trackballRead();
+      if (tb == TrackballDir::CLICK) {
+#ifdef RANGE_TELEMETRY
+        telemetryForceReconnect();
+#endif
+        AppStateGuard guard;
+        g_state.wifiReconnectReq = true;   // avisa a UI (feedback na tela)
+        g_state.wifiReconnectMs  = millis();
+        g_state.dirty            = true;
       }
     }
 #endif
@@ -386,7 +493,10 @@ void uiTask(void* pvParameters) {
       }
     }
 
-    if (needRedraw) {
+    // Com o backlight apagado (tecla 'B') não há o que mostrar: pulamos o
+    // desenho para não gastar o bus SPI à toa. O estado continua atualizando;
+    // ao reacender, marcamos dirty e o frame volta na hora.
+    if (needRedraw && boardBacklightIsOn()) {
       // Desenha segurando o bus SPI compartilhado; desseleciona rádio/SD.
       SpiBusGuard busGuard;
       digitalWrite(BOARD_RADIO_CS,  HIGH);

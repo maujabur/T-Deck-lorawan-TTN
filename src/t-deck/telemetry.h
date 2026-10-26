@@ -30,6 +30,15 @@ bool telemetryCanFlush();
 // true se o WiFi está conectado no momento.
 bool telemetryWifiUp();
 
+// Mantém o WiFi vivo: se caiu, refaz WiFi.begin() periodicamente (não
+// bloqueante). Chame com frequência no loop do range test. Sem isto, após
+// perder o WiFi uma vez, o ESP não voltava a conectar sozinho.
+void telemetryEnsureWifi();
+
+// Força uma tentativa de reconexão IMEDIATA (ex.: acionada pelo usuário via
+// trackball). Reinicia o WiFi do zero.
+void telemetryForceReconnect();
+
 // Status do último POST para a UI mostrar de forma compacta.
 enum class TsPostStatus : uint8_t {
   NONE = 0,   // ainda não tentou postar

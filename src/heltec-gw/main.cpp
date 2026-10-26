@@ -17,6 +17,7 @@
 #include <math.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <esp_sleep.h>
 #include "heltec_board.h"
 #include "heltec_config.h"   // parâmetros de energia/bateria/display
 #include "heltec_power.h"    // botão, bateria, deep sleep
@@ -34,10 +35,82 @@ static float    battVolts      = 0.0f; // tensão lida periodicamente
 
 // Liga/desliga o painel OLED (comando do controlador; não mexe no Vext,
 // para o rádio seguir funcionando).
-static void setDisplayOn(bool on) {
+// Imprime uma linha centralizada horizontalmente, no y dado.
+static void printCentered(const char* line, int16_t y) {
+  int16_t x1, y1; uint16_t w, h;
+  display.getTextBounds(line, 0, y, &x1, &y1, &w, &h);
+  int16_t x = ((int16_t)display.width() - (int16_t)w) / 2;
+  if (x < 0) x = 0;
+  display.setCursor(x, y);
+  display.print(line);
+}
+
+// Forward: setDisplayOn() redesenha a tela ao ligar; a definição vem depois.
+static void drawScreen(const char* statusLine);
+
+// Flash rápido de feedback. Quebra a mensagem por espaços (uma palavra por
+// linha) e centraliza cada linha — em retrato (64px) "SCREEN OFF" não cabe
+// numa linha só, então vira duas linhas limpas em vez de cortado no meio.
+static void flashMessage(const char* msg, uint16_t ms) {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+
+  // Escolhe o tamanho da fonte pela MAIOR palavra: se alguma palavra não
+  // couber na largura em fonte 2 (~12px/char), usa fonte 1 (~6px/char).
+  char tmp[32];
+  strncpy(tmp, msg, sizeof(tmp) - 1);
+  tmp[sizeof(tmp) - 1] = '\0';
+
+  int nLines = 1, maxWord = 0, cur = 0;
+  for (char* p = tmp; ; p++) {
+    if (*p == ' ' || *p == '\0') {
+      if (cur > maxWord) maxWord = cur;
+      cur = 0;
+      if (*p == ' ') nLines++;
+      if (*p == '\0') break;
+    } else cur++;
+  }
+  uint8_t sz = (maxWord * 12 <= (int)display.width()) ? 2 : 1;
+  display.setTextSize(sz);
+  const int16_t lineH = (sz == 2) ? 18 : 10;
+
+  int16_t y = ((int16_t)display.height() - nLines * lineH) / 2;
+  if (y < 0) y = 0;
+
+  strncpy(tmp, msg, sizeof(tmp) - 1);   // strtok consome; recarrega
+  tmp[sizeof(tmp) - 1] = '\0';
+  char* tok = strtok(tmp, " ");
+  while (tok) {
+    printCentered(tok, y);
+    y += lineH;
+    tok = strtok(nullptr, " ");
+  }
+
+  display.display();
+  delay(ms);
+  display.setTextSize(1);
+}
+
+// Liga/desliga o painel OLED. Se 'reason' != nullptr, dá um flash de
+// feedback com o motivo antes de apagar (ou ao religar).
+static void setDisplayOn(bool on, const char* reason = nullptr) {
+  if (!on) {
+    // Vai apagar: mostra o motivo por um instante, depois desliga o painel.
+    if (reason) flashMessage(reason, HCFG_FLASH_MS);
+    display.ssd1306_command(SSD1306_DISPLAYOFF);
+  } else {
+    // Vai ligar: liga o painel, dá o flash de feedback e já redesenha a tela
+    // de status na hora. Sem este redraw imediato, o "SCREEN ON" ficava
+    // congelado até o próximo ciclo da loop() (que espera o rádio), parecendo
+    // mais longo que os outros flashes.
+    display.ssd1306_command(SSD1306_DISPLAYON);
+    if (reason) flashMessage(reason, HCFG_FLASH_MS);
+    lastActivityMs = millis();
+    displayOn = on;
+    drawScreen("Escutando");
+    return;
+  }
   displayOn = on;
-  display.ssd1306_command(on ? SSD1306_DISPLAYON : SSD1306_DISPLAYOFF);
-  if (on) lastActivityMs = millis();
 }
 
 // ---- Rádio SX1262 ----
@@ -124,6 +197,14 @@ static void drawScreen(const char* statusLine) {
     const char* comma = strchr(lastMsg.c_str(), ',');
     snprintf(buf, sizeof(buf), "%s", comma ? comma + 1 : lastMsg.c_str());
     printRight(59, buf);
+
+    // Conteúdo bruto do último pacote, abaixo do Seq. Pode enrolar para a
+    // próxima linha (textWrap default) se for longo — tudo bem, cabe até o
+    // rodapé da bateria.
+    display.setCursor(0, 71);
+    display.print("Msg:");
+    display.setCursor(0, 81);
+    display.print(lastMsg);
   } else {
     display.setCursor(0, 35);
     display.println(statusLine);
@@ -152,7 +233,11 @@ void setup() {
     // Segue mesmo assim; o rádio é o que importa.
   } else {
     display.setRotation(HCFG_DISPLAY_ROTATION);   // retrato para o case em pé
-    drawScreen("Iniciando radio...");
+    // Se acordou de deep sleep (botão), dá um flash de "WAKE".
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
+      flashMessage("WAKE", HCFG_FLASH_MS);
+    }
+    drawScreen("Iniciando");
   }
 
   // 2) SPI do rádio (barramento dedicado do Heltec).
@@ -165,7 +250,7 @@ void setup() {
                            HELTEC_RADIO_PREAMBLE);
   if (st != RADIOLIB_ERR_NONE) {
     Serial.printf("[GW] radio.begin falhou: %d\n", st);
-    drawScreen("ERRO no radio!");
+    drawScreen("ERRO radio");
     while (true) { delay(1000); }
   }
 
@@ -181,7 +266,7 @@ void setup() {
   lastActivityMs = millis();
 
   Serial.println("[GW] Escutando...");
-  drawScreen("Escutando...");
+  drawScreen("Escutando");
 }
 
 void loop() {
@@ -189,12 +274,17 @@ void loop() {
   BtnEvent be = powerPollButton();
   if (be == BtnEvent::SHORT) {
     // Clique curto: liga/desliga o OLED (economia leve; rádio segue ativo).
-    setDisplayOn(!displayOn);
+    if (displayOn) setDisplayOn(false, "SCREEN OFF");
+    else           setDisplayOn(true,  "SCREEN ON");
     Serial.printf("[PWR] OLED %s\n", displayOn ? "ligado" : "desligado");
   } else if (be == BtnEvent::LONG) {
     // Pressão longa: deep sleep (ultra econômico). Desliga rádio e OLED.
     Serial.println("[PWR] Entrando em deep sleep...");
-    if (displayOn) { display.clearDisplay(); display.display(); }
+    // Garante o painel ligado para o flash "SLEEP" aparecer mesmo quando a
+    // tela já estava apagada (senão o sleep ficava sem feedback nenhum).
+    display.ssd1306_command(SSD1306_DISPLAYON);
+    flashMessage("SLEEP", HCFG_FLASH_MS);        // feedback antes de dormir
+    display.clearDisplay(); display.display();
     radio.sleep();
     powerDeepSleep();   // não retorna; acorda pelo botão (reboot)
   }
@@ -212,7 +302,10 @@ void loop() {
       lastMsg  = msg;
       lastRssi = radio.getRSSI();
       lastSnr  = radio.getSNR();
-      lastActivityMs = millis();   // atividade: reinicia o timeout do display
+      // NÃO reinicia o timeout do display aqui: o auto-sleep conta só a partir
+      // da última interação do BOTÃO. Durante um range test o T-Deck pinga a
+      // cada poucos segundos; se o tráfego de rádio contasse como atividade, o
+      // OLED nunca apagaria. Com a tela apagada o rádio/ACK seguem normais.
 
       uint32_t seq = 0;
       if (rangeParsePing(msg.c_str(), &seq)) {
@@ -247,13 +340,13 @@ void loop() {
     // estão errados (ou não há bateria conectada).
     Serial.printf("[BAT] raw=%.0f mV  -> %.2f V (fator %.2f)\n",
                   rawMv, battVolts, HCFG_VBAT_FACTOR);
-    if (displayOn) drawScreen("Escutando...");
+    if (displayOn) drawScreen("Escutando");
   }
 
   // ---- Auto-sleep do display por inatividade ----
   if (displayOn && HCFG_DISPLAY_TIMEOUT_MS > 0 &&
       (millis() - lastActivityMs > HCFG_DISPLAY_TIMEOUT_MS)) {
-    setDisplayOn(false);
+    setDisplayOn(false, "SCREEN OFF");
     Serial.println("[PWR] OLED dormiu por inatividade (botao religa).");
   }
 

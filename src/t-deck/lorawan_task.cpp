@@ -108,11 +108,25 @@ void loraTask(void* pvParameters) {
     char ping[24];
     rangeMakePing(ping, sizeof(ping), seq);
 
+    // Cadência de medição desta iteração: mais rápida online, mais lenta
+    // offline. Calculada no topo para também derivar o limiar de "SEM ACK".
+#ifdef RANGE_TELEMETRY
+    uint32_t waitMs = telemetryWifiUp() ? CFG_MEAS_INTERVAL_ONLINE_MS
+                                        : CFG_MEAS_INTERVAL_OFFLINE_MS;
+#else
+    uint32_t waitMs = CFG_MEAS_INTERVAL_ONLINE_MS;
+#endif
+    // A tela mostra "SEM ACK" quando o último ACK passa deste limiar. Usamos
+    // ~2,25x a cadência: cobre um ping perdido com folga, sem acusar perda só
+    // porque offline o loop é mais lento (16s > 10s fixos de antes).
+    uint32_t staleMs = waitMs * 2 + waitMs / 4;
+
     bool  gotAck   = false;
     int   rssiFwd  = 0;      // IDA (vem no ACK)
     float snrFwd   = 0.0f;
     int   rssiRev  = 0;      // VOLTA (medido aqui no ACK)
     float snrRev   = 0.0f;
+    int16_t rxSt   = 0;      // motivo da (não) recepção, para diagnóstico
 
     {
       SpiBusGuard busGuard;
@@ -122,7 +136,7 @@ void loraTask(void* pvParameters) {
       int16_t txSt = radio.transmit(ping);          // 1) transmite o PING
       if (txSt == RADIOLIB_ERR_NONE) {
         String resp;
-        int16_t rxSt = radio.receive(resp, CFG_ACK_TIMEOUT_MS);  // 2) ACK
+        rxSt = radio.receive(resp, CFG_ACK_TIMEOUT_MS);  // 2) ACK
         if (rxSt == RADIOLIB_ERR_NONE) {
           uint32_t ackSeq = 0;
           if (rangeParseAck(resp.c_str(), &ackSeq, &rssiFwd, &snrFwd) &&
@@ -133,6 +147,18 @@ void loraTask(void* pvParameters) {
           }
         }
       }
+    }
+
+    // Diagnóstico do motivo quando NÃO houve ACK, para distinguir:
+    //   TIMEOUT     -> silêncio (nada chegou: alcance/obstrução)
+    //   CRC_MISMATCH-> chegou corrompido (INTERFERÊNCIA de RF, ex.: no carro)
+    //   outro       -> seq trocado / ruído
+    if (!gotAck) {
+      const char* why = (rxSt == RADIOLIB_ERR_RX_TIMEOUT)   ? "timeout(silencio)"
+                      : (rxSt == RADIOLIB_ERR_CRC_MISMATCH) ? "CRC(interferencia)"
+                                                            : "outro";
+      Serial.printf("[RANGE] seq=%lu SEM ACK (%s, rx=%d)\n",
+                    (unsigned long)seq, why, rxSt);
     }
 
     // Lê estado de GPS/waypoint e publica a medição para a UI.
@@ -149,6 +175,7 @@ void loraTask(void* pvParameters) {
         g_state.rtLastAckMs = millis();
       }
       g_state.phase = gotAck ? LoRaWANPhase::JOINED : LoRaWANPhase::WAITING;
+      g_state.rtStaleMs = staleMs;   // limiar de "SEM ACK" conforme a cadência
       g_state.dirty = true;
 
       fix   = g_state.gpsFix;  lat = g_state.latitude; lon = g_state.longitude;
@@ -173,9 +200,17 @@ void loraTask(void* pvParameters) {
       m.wpLabel = wpPending ? (int16_t)wpLabel : (int16_t)-1;
       m.lat = lat; m.lon = lon;
       bufferPush(m);
+    } else if (gotAck) {
+      // Teve ACK mas NÃO entrou no buffer: diz por quê, para não parecer que a
+      // telemetria está quebrada quando na verdade falta fix/hora de GPS.
+      Serial.printf("[RANGE] nao bufferizado (sem %s) -> aguardando GPS\n",
+                    !fix ? "fix de posicao" : "hora GPS");
     }
 
 #ifdef RANGE_TELEMETRY
+    // Mantém o WiFi vivo: se caiu, tenta reconectar ativamente (periódico).
+    telemetryEnsureWifi();
+
     // Descarrega o buffer em bulk quando online e a janela permitir. Mesmo
     // caminho serve para o escoamento online (a cada 16s) e para esvaziar o
     // acúmulo offline quando a internet volta.
@@ -198,13 +233,7 @@ void loraTask(void* pvParameters) {
     }
 #endif
 
-    // Cadência de medição: mais rápida online, mais lenta offline.
-#ifdef RANGE_TELEMETRY
-    uint32_t waitMs = telemetryWifiUp() ? CFG_MEAS_INTERVAL_ONLINE_MS
-                                        : CFG_MEAS_INTERVAL_OFFLINE_MS;
-#else
-    uint32_t waitMs = CFG_MEAS_INTERVAL_ONLINE_MS;
-#endif
+    // Aguarda até a próxima medição (cadência calculada no topo do loop).
     vTaskDelay(pdMS_TO_TICKS(waitMs));
   }
 #endif

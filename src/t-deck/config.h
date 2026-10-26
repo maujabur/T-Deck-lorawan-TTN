@@ -10,6 +10,14 @@
 //
 
 // ============================================================
+// RELÓGIO (exibição na tela)
+// ============================================================
+// Fuso horário para MOSTRAR o relógio do GPS na tela, em horas relativas
+// ao UTC. Brasília = -3. (Os dados enviados ao ThingSpeak continuam em UTC;
+// isto afeta só o relógio exibido.)
+#define CFG_TZ_OFFSET_HOURS            -3
+
+// ============================================================
 // RANGE TEST — cadência de medição e envio
 // ============================================================
 
@@ -39,6 +47,11 @@
 
 // Tempo para tentar conectar ao WiFi no início (ms).
 #define CFG_WIFI_CONNECT_TIMEOUT_MS    15000UL
+
+// Intervalo entre tentativas de RECONEXÃO ativa quando o WiFi cai (ms).
+// Sem isto, após perder o WiFi uma vez (ex.: hotspot sumiu), o ESP não
+// voltava a conectar sozinho ao reaparecer.
+#define CFG_WIFI_RETRY_MS              10000UL
 
 // ============================================================
 // BUFFER DE MEDIÇÕES (PSRAM, circular)
