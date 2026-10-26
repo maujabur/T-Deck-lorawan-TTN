@@ -200,6 +200,11 @@ void loraTask(void* pvParameters) {
       m.wpLabel = wpPending ? (int16_t)wpLabel : (int16_t)-1;
       m.lat = lat; m.lon = lon;
       bufferPush(m);
+    } else if (gotAck) {
+      // Teve ACK mas NÃO entrou no buffer: diz por quê, para não parecer que a
+      // telemetria está quebrada quando na verdade falta fix/hora de GPS.
+      Serial.printf("[RANGE] nao bufferizado (sem %s) -> aguardando GPS\n",
+                    !fix ? "fix de posicao" : "hora GPS");
     }
 
 #ifdef RANGE_TELEMETRY
