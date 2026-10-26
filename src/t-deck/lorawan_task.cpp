@@ -11,10 +11,12 @@
 #include "lora_test_params.h"   // parâmetros de rádio compartilhados c/ Heltec
 #endif
 #ifdef TEST_LORA_RANGE
+#include "config.h"             // parâmetros configuráveis (intervalos, buffer)
 #include "range_proto.h"        // protocolo PING/ACK
+#include "measurement_buffer.h" // buffer circular na PSRAM
 #endif
 #ifdef RANGE_TELEMETRY
-#include "telemetry.h"          // upload WiFi -> ThingSpeak
+#include "telemetry.h"          // upload WiFi -> ThingSpeak (bulk)
 #endif
 
 // ---- Hardware do rádio (privado deste módulo) ----
@@ -93,11 +95,13 @@ void loraTask(void* pvParameters) {
   // T-Deck transmite PING, troca para RX e espera o ACK do Heltec. O ACK traz
   // o RSSI/SNR de IDA (medido pelo Heltec); o RSSI/SNR de VOLTA é medido aqui.
   // Mostra tudo na tela para teste de alcance a pé, sem TTN nem internet.
+  bufferInit();   // aloca o buffer circular na PSRAM
 #ifdef RANGE_TELEMETRY
-  // Opcional: conecta no WiFi para postar no ThingSpeak. Se falhar, o range
-  // test continua normalmente só com o display (telemetria é bônus).
+  // Opcional: conecta no WiFi. Se falhar, o range test continua e as
+  // medições vão para o buffer até a internet voltar.
   telemetryBegin();
 #endif
+
   uint32_t seq = 0;
   for (;;) {
     seq++;
@@ -115,13 +119,10 @@ void loraTask(void* pvParameters) {
       digitalWrite(BOARD_TFT_CS,    HIGH);
       digitalWrite(BOARD_SDCARD_CS, HIGH);
 
-      // 1) Transmite o PING.
-      int16_t txSt = radio.transmit(ping);
-
+      int16_t txSt = radio.transmit(ping);          // 1) transmite o PING
       if (txSt == RADIOLIB_ERR_NONE) {
-        // 2) Escuta o ACK com timeout (bloqueante, mas nesta Task dedicada).
         String resp;
-        int16_t rxSt = radio.receive(resp, 0);  // 0 = usa timeout padrão do SF
+        int16_t rxSt = radio.receive(resp, CFG_ACK_TIMEOUT_MS);  // 2) ACK
         if (rxSt == RADIOLIB_ERR_NONE) {
           uint32_t ackSeq = 0;
           if (rangeParseAck(resp.c_str(), &ackSeq, &rssiFwd, &snrFwd) &&
@@ -134,74 +135,77 @@ void loraTask(void* pvParameters) {
       }
     }
 
-    Serial.printf("[RANGE] seq=%lu ack=%d  IDA rssi=%d snr=%.1f  VOLTA rssi=%d snr=%.1f\n",
-                  (unsigned long)seq, gotAck ? 1 : 0,
-                  rssiFwd, snrFwd, rssiRev, snrRev);
-
-    // Publica no estado para a UI desenhar.
+    // Lê estado de GPS/waypoint e publica a medição para a UI.
+    bool     fix; double lat, lon; time_t epoch;
+    uint32_t acks; bool wpPending; uint8_t wpLabel; uint32_t wpCount;
     {
       AppStateGuard guard;
-      g_state.rtSeq     = seq;
-      g_state.rtGotAck  = gotAck;
+      g_state.rtSeq    = seq;
+      g_state.rtGotAck = gotAck;
       if (gotAck) {
         g_state.rtAcks++;
-        g_state.rtRssiFwd   = rssiFwd;
-        g_state.rtSnrFwd    = snrFwd;
-        g_state.rtRssiRev   = rssiRev;
-        g_state.rtSnrRev    = snrRev;
+        g_state.rtRssiFwd = rssiFwd; g_state.rtSnrFwd = snrFwd;
+        g_state.rtRssiRev = rssiRev; g_state.rtSnrRev = snrRev;
         g_state.rtLastAckMs = millis();
       }
       g_state.phase = gotAck ? LoRaWANPhase::JOINED : LoRaWANPhase::WAITING;
       g_state.dirty = true;
+
+      fix   = g_state.gpsFix;  lat = g_state.latitude; lon = g_state.longitude;
+      epoch = g_state.gpsEpoch; acks = g_state.rtAcks;
+      wpPending = g_state.wpPending; wpLabel = g_state.wpLastLabel;
+      wpCount = g_state.wpCount;
+      g_state.wpPending = false;   // consome a marca pendente (vai no buffer)
+    }
+
+    Serial.printf("[RANGE] seq=%lu ack=%d IDA %d/%.1f VOLTA %d/%.1f%s\n",
+                  (unsigned long)seq, gotAck ? 1 : 0, rssiFwd, snrFwd,
+                  rssiRev, snrRev, wpPending ? "  [MARCA]" : "");
+
+    // Bufferiza a medição SÓ se houver ACK + FIX de posição + hora GPS válida.
+    // O GPS trava a HORA antes do fix de posição 3D; sem fix, lat/lon seria
+    // (0,0) ("Null Island") e poluiria o mapa. Então exigimos fix de verdade.
+    if (gotAck && fix && epoch > 0) {
+      Measurement m;
+      m.ts = epoch; m.rssiFwd = rssiFwd; m.snrFwd = snrFwd;
+      m.rssiRev = rssiRev; m.snrRev = snrRev;
+      m.seq = seq; m.acks = acks;
+      m.wpLabel = wpPending ? (int16_t)wpLabel : (int16_t)-1;
+      m.lat = lat; m.lon = lon;
+      bufferPush(m);
     }
 
 #ifdef RANGE_TELEMETRY
-    // Posta no ThingSpeak (o módulo respeita o intervalo mínimo de ~16s
-    // internamente, então chamar todo ciclo é seguro). Lê GPS do estado.
-    if (gotAck) {
-      bool   fix; double lat, lon; uint32_t acks;
-      {
-        AppStateGuard guard;
-        fix  = g_state.gpsFix;
-        lat  = g_state.latitude;
-        lon  = g_state.longitude;
-        acks = g_state.rtAcks;
-      }
-      telemetryPost(rssiFwd, snrFwd, rssiRev, snrRev, seq, acks, fix, lat, lon);
-    }
-    // Se houver uma MARCA pendente (teclado), envia imediatamente com o
-    // lat/lon atual — um evento pontual não deve esperar o intervalo normal.
-    {
-      bool     pending; uint8_t label; uint32_t wpCount;
-      bool     fix; double lat, lon;
-      {
-        AppStateGuard guard;
-        pending = g_state.wpPending;
-        label   = g_state.wpLastLabel;
-        wpCount = g_state.wpCount;
-        fix     = g_state.gpsFix;
-        lat     = g_state.latitude;
-        lon     = g_state.longitude;
-        g_state.wpPending = false;   // consome o flag
-      }
-      if (pending) {
-        telemetryPostWaypoint(label, wpCount, rssiFwd, snrFwd, fix, lat, lon);
-      }
+    // Descarrega o buffer em bulk quando online e a janela permitir. Mesmo
+    // caminho serve para o escoamento online (a cada 16s) e para esvaziar o
+    // acúmulo offline quando a internet volta.
+    if (telemetryWifiUp() && telemetryCanFlush() && bufferCount() > 0) {
+      static Measurement batch[CFG_BULK_MAX_POINTS];
+      uint32_t n = bufferPeek(batch, CFG_BULK_MAX_POINTS);
+      uint32_t sent = telemetryBulkFlush(batch, n);
+      if (sent > 0) bufferPopFront(sent);   // só remove o que foi gravado
     }
 
-    // Publica o status da telemetria para a UI mostrar de forma compacta.
+    // Status para a UI (inclui tamanho do buffer).
     {
       AppStateGuard guard;
       g_state.tsEnabled    = true;
       g_state.wifiUp       = telemetryWifiUp();
       g_state.tsLastStatus = (uint8_t)telemetryLastStatus();
       g_state.tsPostCount  = telemetryPostCount();
+      g_state.bufCount     = bufferCount();
       g_state.dirty        = true;
     }
 #endif
 
-    // ~2s entre pings. Não-bloqueante (cede CPU para UI/GPS).
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    // Cadência de medição: mais rápida online, mais lenta offline.
+#ifdef RANGE_TELEMETRY
+    uint32_t waitMs = telemetryWifiUp() ? CFG_MEAS_INTERVAL_ONLINE_MS
+                                        : CFG_MEAS_INTERVAL_OFFLINE_MS;
+#else
+    uint32_t waitMs = CFG_MEAS_INTERVAL_ONLINE_MS;
+#endif
+    vTaskDelay(pdMS_TO_TICKS(waitMs));
   }
 #endif
 

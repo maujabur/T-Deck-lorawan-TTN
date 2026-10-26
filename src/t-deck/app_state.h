@@ -11,6 +11,7 @@
 //   heap quando duas Tasks em cores diferentes tocam a mesma struct.
 //
 #include <Arduino.h>
+#include <time.h>
 
 // --------- Estado do scanner LoRaWAN ---------
 enum class LoRaWANPhase : uint8_t {
@@ -29,6 +30,7 @@ struct AppState {
   double   altitude      = 0.0;
   uint32_t satellites    = 0;
   uint32_t gpsCharsSeen  = 0;       // diagnóstico: bytes NMEA recebidos
+  time_t   gpsEpoch      = 0;       // horário UTC do GPS (0 = sem data/hora válida)
 
   // ---- Scanner LoRaWAN ----
   LoRaWANPhase phase     = LoRaWANPhase::BOOT;
@@ -55,7 +57,8 @@ struct AppState {
   bool     tsEnabled     = false;   // telemetria compilada/ativa neste firmware
   bool     wifiUp        = false;   // WiFi conectado agora
   uint8_t  tsLastStatus  = 0;       // 0=none, 1=ok, 2=fail (último POST)
-  uint32_t tsPostCount   = 0;       // posts OK acumulados
+  uint32_t tsPostCount   = 0;       // medições gravadas no ThingSpeak (acum.)
+  uint32_t bufCount      = 0;       // medições no buffer aguardando envio
 
   // ---- Waypoints (marcas via teclado, modo range test) ----
   uint32_t wpCount       = 0;       // total de marcas registradas
