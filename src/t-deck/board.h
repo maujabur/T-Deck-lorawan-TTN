@@ -36,6 +36,12 @@
 // Executa a sequência de bring-up acima. Chame UMA vez no início do setup().
 void boardInit();
 
+// Liga/desliga o backlight do display (economia / tela escura no campo).
+// Só mexe no pino do backlight; o painel e o bus SPI continuam intactos, então
+// religar é instantâneo e sem reconfigurar nada.
+void boardBacklight(bool on);
+bool boardBacklightIsOn();
+
 // Mutex do barramento SPI. Qualquer Task que vá falar com TFT ou rádio
 // deve travar isto durante a transação para não colidir no bus.
 extern SemaphoreHandle_t g_spiMutex;

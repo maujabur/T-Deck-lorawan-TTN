@@ -34,3 +34,14 @@ void boardInit() {
     g_spiMutex = xSemaphoreCreateMutex();
   }
 }
+
+static bool s_blOn = true;
+
+void boardBacklight(bool on) {
+  digitalWrite(BOARD_BL_PIN, on ? HIGH : LOW);
+  s_blOn = on;
+}
+
+bool boardBacklightIsOn() {
+  return s_blOn;
+}

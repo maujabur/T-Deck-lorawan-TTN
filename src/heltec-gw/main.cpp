@@ -258,7 +258,7 @@ void loop() {
   if (be == BtnEvent::SHORT) {
     // Clique curto: liga/desliga o OLED (economia leve; rádio segue ativo).
     if (displayOn) setDisplayOn(false, "SCREEN OFF");
-    else           setDisplayOn(true,  "WAKE");
+    else           setDisplayOn(true,  "SCREEN ON");
     Serial.printf("[PWR] OLED %s\n", displayOn ? "ligado" : "desligado");
   } else if (be == BtnEvent::LONG) {
     // Pressão longa: deep sleep (ultra econômico). Desliga rádio e OLED.
