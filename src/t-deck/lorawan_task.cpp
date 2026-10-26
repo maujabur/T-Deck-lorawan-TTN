@@ -162,9 +162,10 @@ void loraTask(void* pvParameters) {
                   (unsigned long)seq, gotAck ? 1 : 0, rssiFwd, snrFwd,
                   rssiRev, snrRev, wpPending ? "  [MARCA]" : "");
 
-    // Bufferiza a medição SE houver ACK e timestamp GPS válido (sem hora não
-    // dá para enviar no bulk depois). A marca (se houver) vai junto.
-    if (gotAck && epoch > 0) {
+    // Bufferiza a medição SÓ se houver ACK + FIX de posição + hora GPS válida.
+    // O GPS trava a HORA antes do fix de posição 3D; sem fix, lat/lon seria
+    // (0,0) ("Null Island") e poluiria o mapa. Então exigimos fix de verdade.
+    if (gotAck && fix && epoch > 0) {
       Measurement m;
       m.ts = epoch; m.rssiFwd = rssiFwd; m.snrFwd = snrFwd;
       m.rssiRev = rssiRev; m.snrRev = snrRev;
