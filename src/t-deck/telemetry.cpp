@@ -12,6 +12,9 @@ static uint32_t lastPostMs = 0;
 static uint32_t     postOkCount = 0;   // total de MEDIÇÕES gravadas (não de POSTs)
 static TsPostStatus lastStatus  = TsPostStatus::NONE;
 
+// Controle da reconexão ativa do WiFi.
+static uint32_t lastWifiTryMs = 0;
+
 uint32_t     telemetryPostCount()  { return postOkCount; }
 TsPostStatus telemetryLastStatus() { return lastStatus; }
 
@@ -37,6 +40,30 @@ bool telemetryBegin() {
 
 bool telemetryWifiUp() {
   return WiFi.status() == WL_CONNECTED;
+}
+
+void telemetryForceReconnect() {
+  Serial.println("[WiFi] Reconexao forcada pelo usuario.");
+  WiFi.disconnect(true);        // derruba e esquece a sessão atual
+  delay(50);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  lastWifiTryMs = millis();
+}
+
+void telemetryEnsureWifi() {
+  if (WiFi.status() == WL_CONNECTED) return;   // tudo certo
+
+  // Caiu: a cada CFG_WIFI_RETRY_MS refaz um WiFi.begin() de verdade (mais
+  // robusto que o reconnect() passivo, que não voltava após o AP sumir).
+  uint32_t now = millis();
+  if (now - lastWifiTryMs >= CFG_WIFI_RETRY_MS) {
+    lastWifiTryMs = now;
+    Serial.println("[WiFi] Sem conexao, tentando reconectar...");
+    WiFi.disconnect();
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  }
 }
 
 bool telemetryCanFlush() {

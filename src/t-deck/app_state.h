@@ -59,6 +59,8 @@ struct AppState {
   uint8_t  tsLastStatus  = 0;       // 0=none, 1=ok, 2=fail (último POST)
   uint32_t tsPostCount   = 0;       // medições gravadas no ThingSpeak (acum.)
   uint32_t bufCount      = 0;       // medições no buffer aguardando envio
+  bool     wifiReconnectReq = false;// usuário pediu reconexão (trackball)
+  uint32_t wifiReconnectMs  = 0;    // millis() do pedido (p/ aviso na tela)
 
   // ---- Waypoints (marcas via teclado, modo range test) ----
   uint32_t wpCount       = 0;       // total de marcas registradas

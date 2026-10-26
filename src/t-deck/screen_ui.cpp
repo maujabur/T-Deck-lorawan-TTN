@@ -4,7 +4,10 @@
 #include "battery.h"
 #include <TFT_eSPI.h>
 #ifdef TEST_LORA_RANGE
-#include "keyboard.h"   // marcar waypoints com o teclado
+#include "keyboard.h"   // teclado (waypoints) + trackball (reconexão WiFi)
+#endif
+#ifdef RANGE_TELEMETRY
+#include "telemetry.h"  // telemetryForceReconnect()
 #endif
 
 #ifdef TEST_LORA_RANGE
@@ -94,8 +97,9 @@ void screenInit() {
   tft.println("=== T-DECK SCANNER ===");
 
 #ifdef TEST_LORA_RANGE
-  // Inicializa o teclado para marcar waypoints durante o range test.
+  // Teclado (waypoints) + trackball (clique força reconexão WiFi).
   keyboardInit();
+  trackballInit();
 #endif
 }
 
@@ -128,14 +132,25 @@ static void drawRangeTest(const AppState& s) {
     uint16_t tsCol = (s.tsLastStatus == 1) ? TFT_GREEN
                    : (s.tsLastStatus == 2) ? TFT_RED
                                            : TFT_DARKGREY;
-    int16_t wW = tft.textWidth(wifiTxt);
-    int16_t tW = tft.textWidth(tsTxt);
-    int16_t x0 = tft.width() - (wW + tW) - 4;
-    tft.setCursor(x0, 4);
-    tft.setTextColor(wifiCol, TFT_BLACK);
-    tft.print(wifiTxt);
-    tft.setTextColor(tsCol, TFT_BLACK);
-    tft.print(tsTxt);
+    // Se o usuário pediu reconexão há pouco (trackball), mostra "RECONECTANDO"
+    // em vez do indicador normal, por ~3s.
+    uint32_t rcAge = (s.wifiReconnectMs > 0) ? (millis() - s.wifiReconnectMs) : 0xFFFFFFFF;
+    if (s.wifiReconnectMs > 0 && rcAge < 3000) {
+      const char* rc = "RECONECTANDO";
+      tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+      int16_t rw = tft.textWidth(rc);
+      tft.setCursor(tft.width() - rw - 4, 4);
+      tft.print(rc);
+    } else {
+      int16_t wW = tft.textWidth(wifiTxt);
+      int16_t tW = tft.textWidth(tsTxt);
+      int16_t x0 = tft.width() - (wW + tW) - 4;
+      tft.setCursor(x0, 4);
+      tft.setTextColor(wifiCol, TFT_BLACK);
+      tft.print(wifiTxt);
+      tft.setTextColor(tsCol, TFT_BLACK);
+      tft.print(tsTxt);
+    }
 
     // Segunda linha: buffer de medições aguardando envio.
     //   0 -> cinza (tudo sincronizado); >0 -> amarelo; grande -> laranja.
@@ -193,9 +208,21 @@ static void drawRangeTest(const AppState& s) {
   tft.setCursor(10, 118);
   tft.printf("VOLTA R%d S%.1f", s.rtRssiRev, s.rtSnrRev);
 
-  // GPS (coords para marcar no mapa de alcance)
+  // GPS (coords para marcar no mapa de alcance) + relógio UTC do GPS.
   tft.drawFastHLine(0, 142, tft.width(), TFT_DARKGREY);
   tft.setTextSize(1);
+
+  // Relógio (canto direito do bloco GPS), a partir do epoch do GPS.
+  if (s.gpsEpoch > 0) {
+    struct tm t; time_t ep = s.gpsEpoch; gmtime_r(&ep, &t);
+    char clk[12];
+    snprintf(clk, sizeof(clk), "%02d:%02d:%02d UTC", t.tm_hour, t.tm_min, t.tm_sec);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    int16_t cw = tft.textWidth(clk);
+    tft.setCursor(tft.width() - cw - 6, 150);
+    tft.print(clk);
+  }
+
   if (s.gpsFix) {
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setCursor(10, 150);
@@ -336,6 +363,19 @@ void uiTask(void* pvParameters) {
         g_state.wpLastMs    = millis();
         g_state.wpPending   = true;   // a loraTask/telemetria consome
         g_state.dirty       = true;
+      }
+
+      // Clique do trackball: força reconexão do WiFi (útil quando o hotspot
+      // voltou mas o ESP não reconectou sozinho).
+      TrackballDir tb = trackballRead();
+      if (tb == TrackballDir::CLICK) {
+#ifdef RANGE_TELEMETRY
+        telemetryForceReconnect();
+#endif
+        AppStateGuard guard;
+        g_state.wifiReconnectReq = true;   // avisa a UI (feedback na tela)
+        g_state.wifiReconnectMs  = millis();
+        g_state.dirty            = true;
       }
     }
 #endif

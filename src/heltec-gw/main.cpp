@@ -17,6 +17,7 @@
 #include <math.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <esp_sleep.h>
 #include "heltec_board.h"
 #include "heltec_config.h"   // parâmetros de energia/bateria/display
 #include "heltec_power.h"    // botão, bateria, deep sleep
@@ -34,10 +35,35 @@ static float    battVolts      = 0.0f; // tensão lida periodicamente
 
 // Liga/desliga o painel OLED (comando do controlador; não mexe no Vext,
 // para o rádio seguir funcionando).
-static void setDisplayOn(bool on) {
+// Flash rápido de texto grande centralizado (feedback visual).
+static void flashMessage(const char* msg, uint16_t ms) {
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
+  // Centraliza aproximadamente (fonte 2 = ~12px/char).
+  int16_t x = (display.width() - (int16_t)strlen(msg) * 12) / 2;
+  if (x < 0) x = 0;
+  display.setCursor(x, (display.height() - 16) / 2);
+  display.print(msg);
+  display.display();
+  delay(ms);
+  display.setTextSize(1);
+}
+
+// Liga/desliga o painel OLED. Se 'reason' != nullptr, dá um flash de
+// feedback com o motivo antes de apagar (ou ao religar).
+static void setDisplayOn(bool on, const char* reason = nullptr) {
+  if (!on) {
+    // Vai apagar: mostra o motivo por um instante, depois desliga o painel.
+    if (reason) flashMessage(reason, 700);
+    display.ssd1306_command(SSD1306_DISPLAYOFF);
+  } else {
+    // Vai ligar: liga o painel e dá um flash rápido de "WAKE".
+    display.ssd1306_command(SSD1306_DISPLAYON);
+    if (reason) flashMessage(reason, 400);
+    lastActivityMs = millis();
+  }
   displayOn = on;
-  display.ssd1306_command(on ? SSD1306_DISPLAYON : SSD1306_DISPLAYOFF);
-  if (on) lastActivityMs = millis();
 }
 
 // ---- Rádio SX1262 ----
@@ -152,6 +178,10 @@ void setup() {
     // Segue mesmo assim; o rádio é o que importa.
   } else {
     display.setRotation(HCFG_DISPLAY_ROTATION);   // retrato para o case em pé
+    // Se acordou de deep sleep (botão), dá um flash de "WAKE".
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
+      flashMessage("WAKE", 500);
+    }
     drawScreen("Iniciando radio...");
   }
 
@@ -189,12 +219,14 @@ void loop() {
   BtnEvent be = powerPollButton();
   if (be == BtnEvent::SHORT) {
     // Clique curto: liga/desliga o OLED (economia leve; rádio segue ativo).
-    setDisplayOn(!displayOn);
+    if (displayOn) setDisplayOn(false, "SCREEN OFF");
+    else           setDisplayOn(true,  "WAKE");
     Serial.printf("[PWR] OLED %s\n", displayOn ? "ligado" : "desligado");
   } else if (be == BtnEvent::LONG) {
     // Pressão longa: deep sleep (ultra econômico). Desliga rádio e OLED.
     Serial.println("[PWR] Entrando em deep sleep...");
-    if (displayOn) { display.clearDisplay(); display.display(); }
+    if (displayOn) flashMessage("SLEEP", 800);   // feedback antes de dormir
+    display.clearDisplay(); display.display();
     radio.sleep();
     powerDeepSleep();   // não retorna; acorda pelo botão (reboot)
   }
@@ -253,7 +285,7 @@ void loop() {
   // ---- Auto-sleep do display por inatividade ----
   if (displayOn && HCFG_DISPLAY_TIMEOUT_MS > 0 &&
       (millis() - lastActivityMs > HCFG_DISPLAY_TIMEOUT_MS)) {
-    setDisplayOn(false);
+    setDisplayOn(false, "SCREEN OFF");
     Serial.println("[PWR] OLED dormiu por inatividade (botao religa).");
   }
 

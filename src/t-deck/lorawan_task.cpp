@@ -113,6 +113,7 @@ void loraTask(void* pvParameters) {
     float snrFwd   = 0.0f;
     int   rssiRev  = 0;      // VOLTA (medido aqui no ACK)
     float snrRev   = 0.0f;
+    int16_t rxSt   = 0;      // motivo da (não) recepção, para diagnóstico
 
     {
       SpiBusGuard busGuard;
@@ -122,7 +123,7 @@ void loraTask(void* pvParameters) {
       int16_t txSt = radio.transmit(ping);          // 1) transmite o PING
       if (txSt == RADIOLIB_ERR_NONE) {
         String resp;
-        int16_t rxSt = radio.receive(resp, CFG_ACK_TIMEOUT_MS);  // 2) ACK
+        rxSt = radio.receive(resp, CFG_ACK_TIMEOUT_MS);  // 2) ACK
         if (rxSt == RADIOLIB_ERR_NONE) {
           uint32_t ackSeq = 0;
           if (rangeParseAck(resp.c_str(), &ackSeq, &rssiFwd, &snrFwd) &&
@@ -133,6 +134,18 @@ void loraTask(void* pvParameters) {
           }
         }
       }
+    }
+
+    // Diagnóstico do motivo quando NÃO houve ACK, para distinguir:
+    //   TIMEOUT     -> silêncio (nada chegou: alcance/obstrução)
+    //   CRC_MISMATCH-> chegou corrompido (INTERFERÊNCIA de RF, ex.: no carro)
+    //   outro       -> seq trocado / ruído
+    if (!gotAck) {
+      const char* why = (rxSt == RADIOLIB_ERR_RX_TIMEOUT)   ? "timeout(silencio)"
+                      : (rxSt == RADIOLIB_ERR_CRC_MISMATCH) ? "CRC(interferencia)"
+                                                            : "outro";
+      Serial.printf("[RANGE] seq=%lu SEM ACK (%s, rx=%d)\n",
+                    (unsigned long)seq, why, rxSt);
     }
 
     // Lê estado de GPS/waypoint e publica a medição para a UI.
@@ -176,6 +189,9 @@ void loraTask(void* pvParameters) {
     }
 
 #ifdef RANGE_TELEMETRY
+    // Mantém o WiFi vivo: se caiu, tenta reconectar ativamente (periódico).
+    telemetryEnsureWifi();
+
     // Descarrega o buffer em bulk quando online e a janela permitir. Mesmo
     // caminho serve para o escoamento online (a cada 16s) e para esvaziar o
     // acúmulo offline quando a internet volta.

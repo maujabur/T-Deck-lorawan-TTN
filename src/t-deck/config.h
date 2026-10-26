@@ -40,6 +40,11 @@
 // Tempo para tentar conectar ao WiFi no início (ms).
 #define CFG_WIFI_CONNECT_TIMEOUT_MS    15000UL
 
+// Intervalo entre tentativas de RECONEXÃO ativa quando o WiFi cai (ms).
+// Sem isto, após perder o WiFi uma vez (ex.: hotspot sumiu), o ESP não
+// voltava a conectar sozinho ao reaparecer.
+#define CFG_WIFI_RETRY_MS              10000UL
+
 // ============================================================
 // BUFFER DE MEDIÇÕES (PSRAM, circular)
 // ============================================================
