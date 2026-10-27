@@ -220,6 +220,32 @@ static void drawScreen(const char* statusLine) {
   display.display();
 }
 
+// ---- Proteção de bateria (descarga profunda) ----
+// Entra em deep sleep com um aviso na tela. Chamado tanto na confirmação do
+// loop quanto ao acordar com bateria ainda fraca.
+static void batterySleepNow(float v) {
+  Serial.printf("[PWR] Bateria fraca (%.2f V) -> deep sleep de protecao.\n", v);
+  display.ssd1306_command(SSD1306_DISPLAYON);
+  flashMessage("BATERIA FRACA", HCFG_FLASH_MS);
+  flashMessage("CARREGUE", HCFG_FLASH_MS);
+  display.clearDisplay(); display.display();
+  radio.sleep();
+  powerDeepSleep();   // não retorna; acorda pelo botão (reboot)
+}
+
+// Verifica no loop se a bateria caiu abaixo do limiar por N leituras seguidas.
+// Só conta leituras plausíveis (> 0.1 V): se o ADC vier zerado (sem bateria /
+// alimentado por USB sem célula) não disparamos a proteção.
+static void batteryProtectTick(float v) {
+  if (HCFG_VBAT_SLEEP_V <= 0.0f) return;          // proteção desativada
+  static uint8_t lowCount = 0;
+  if (v > 0.1f && v < HCFG_VBAT_SLEEP_V) {
+    if (++lowCount >= HCFG_VBAT_LOW_COUNT) batterySleepNow(v);
+  } else {
+    lowCount = 0;                                 // recuperou: zera a contagem
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   delay(200);
@@ -264,6 +290,14 @@ void setup() {
   powerInit();
   battVolts = powerReadBattery();
   lastActivityMs = millis();
+
+  // Proteção ao ACORDAR: se a bateria ainda estiver fraca (abaixo da histerese
+  // de religar), volta a dormir em vez de ligar só para desligar de novo.
+  // Só vale quando há bateria plausível (> 0.1 V): alimentado por USB sem
+  // célula o ADC pode vir baixo e não queremos dormir nesse caso.
+  if (HCFG_VBAT_SLEEP_V > 0.0f && battVolts > 0.1f && battVolts < HCFG_VBAT_WAKE_V) {
+    batterySleepNow(battVolts);
+  }
 
   Serial.println("[GW] Escutando...");
   drawScreen("Escutando");
@@ -341,6 +375,10 @@ void loop() {
     Serial.printf("[BAT] raw=%.0f mV  -> %.2f V (fator %.2f)\n",
                   rawMv, battVolts, HCFG_VBAT_FACTOR);
     if (displayOn) drawScreen("Escutando");
+
+    // Proteção de descarga profunda: dorme se ficar abaixo do limiar por
+    // HCFG_VBAT_LOW_COUNT leituras seguidas.
+    batteryProtectTick(battVolts);
   }
 
   // ---- Auto-sleep do display por inatividade ----

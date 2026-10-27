@@ -52,3 +52,21 @@
 
 // Nº de amostras do ADC por leitura (média, reduz ruído).
 #define HCFG_VBAT_SAMPLES          16
+
+// ============================================================
+// PROTEÇÃO DE BATERIA (descarga profunda)
+// ============================================================
+// Abaixo de HCFG_VBAT_SLEEP_V (Volts), e por HCFG_VBAT_LOW_COUNT leituras
+// seguidas (cada ~5s), o Heltec entra em deep sleep para proteger a celula
+// Li-Ion. A contagem evita dormir num pico de queda durante um TX.
+//
+// Ao ACORDAR (o deep sleep reinicia a placa), o setup() so liga de verdade se
+// a tensao estiver acima de HCFG_VBAT_WAKE_V (histerese, maior que a de
+// dormir). Abaixo disso volta a dormir -> evita liga/desliga "zumbi" com a
+// bateria no limite. Como nao da para detectar o USB diretamente no Heltec, a
+// propria subida da tensao ao carregar e o que permite religar.
+//
+// 0 em HCFG_VBAT_SLEEP_V desativa a protecao.
+#define HCFG_VBAT_SLEEP_V          3.20f   // dorme abaixo disto
+#define HCFG_VBAT_WAKE_V           3.40f   // so religa acima disto (histerese)
+#define HCFG_VBAT_LOW_COUNT        3       // leituras seguidas p/ confirmar
