@@ -17,6 +17,7 @@
 #include "gps_task.h"
 #include "lorawan_task.h"
 #include "battery.h"
+#include "config.h"    // CFG_VBAT_* (proteção de bateria no boot)
 #ifdef TEST_KEYBOARD
 #include "keyboard.h"
 #include <TFT_eSPI.h>
@@ -95,6 +96,18 @@ void setup() {
     g_state.phase         = LoRaWANPhase::RADIO_ERROR;
     g_state.lastRadioCode = radioState;
     g_state.dirty         = true;
+  }
+
+  // 5b) Proteção ao LIGAR (histerese): se a bateria ainda está fraca (abaixo de
+  //     CFG_VBAT_WAKE_V), volta a dormir em vez de ligar só para drenar de novo.
+  //     Só vale com bateria plausível (> 0.1 V) e não carregando. Como dormimos
+  //     sem fonte de wake, chegar aqui significa que a chave foi religada —
+  //     então a histerese evita o ciclo "religa-dorme" com a bateria no limite.
+  if (CFG_VBAT_SLEEP_V > 0.0f) {
+    float v = batteryReadVolts();
+    if (!batteryIsCharging(v) && v > 0.1f && v < CFG_VBAT_WAKE_V) {
+      batteryDeepSleepProtect(v);   // não retorna
+    }
   }
 
   // 6) Sobe as Tasks. Core 0 para UI+GPS (leves), core 1 para o rádio

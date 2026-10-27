@@ -25,3 +25,8 @@ SPIClass& screenGetSPI();
 // Desenha três linhas simples de texto (uso em telas de teste/diagnóstico).
 // Trava o barramento SPI internamente.
 void screenDebugLines(const char* l1, const char* l2, const char* l3);
+
+// Proteção de bateria: mostra o aviso, dorme o rádio e entra em deep sleep
+// (não retorna; só o ciclo da chave física religa). Chamado pela uiTask e
+// pelo boot (histerese) ao religar com a bateria ainda fraca.
+void batteryDeepSleepProtect(float v);

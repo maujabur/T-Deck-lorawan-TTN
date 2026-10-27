@@ -23,5 +23,9 @@
 // código do RadioLib (RADIOLIB_ERR_NONE em caso de sucesso).
 int16_t loraInit();
 
+// Coloca o rádio SX1262 em sleep (menor consumo). Usar antes do deep sleep do
+// sistema. Seguro de chamar mesmo que o rádio não tenha inicializado.
+void loraSleep();
+
 // Task do scanner LoRaWAN.
 void loraTask(void* pvParameters);

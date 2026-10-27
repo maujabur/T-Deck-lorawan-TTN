@@ -2,9 +2,10 @@
 #include "app_state.h"
 #include "board.h"
 #include "battery.h"
+#include "config.h"         // CFG_VBAT_* (proteção de bateria), CFG_TZ_OFFSET_HOURS
+#include "lorawan_task.h"   // loraSleep() antes do deep sleep
 #include <TFT_eSPI.h>
 #ifdef TEST_LORA_RANGE
-#include "config.h"     // CFG_TZ_OFFSET_HOURS (relógio)
 #include "keyboard.h"   // teclado (waypoints) + trackball (reconexão WiFi)
 #endif
 #ifdef RANGE_TELEMETRY
@@ -398,10 +399,43 @@ static void drawFromSnapshot(const AppState& s) {
   }
 }
 
+// Mostra uma mensagem grande e centralizada (3 linhas) na tela real, usada
+// como aviso antes do deep sleep de proteção de bateria.
+static void sleepNotice(const char* l1, const char* l2, const char* l3) {
+  SpiBusGuard busGuard;
+  digitalWrite(BOARD_RADIO_CS,  HIGH);
+  digitalWrite(BOARD_SDCARD_CS, HIGH);
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextSize(3);
+  tft.setTextColor(TFT_RED, TFT_BLACK);
+  tft.setCursor(10, 40);
+  tft.print(l1);
+  tft.setTextSize(2);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setCursor(10, 90);
+  tft.print(l2);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.setCursor(10, 120);
+  tft.print(l3);
+}
+
+// Proteção de descarga profunda: avisa, desliga o rádio e entra em deep sleep.
+// Não retorna (só o ciclo da chave física religa). Chamado pela uiTask quando
+// a bateria fica abaixo do limiar, e pelo boot (histerese) ao religar fraco.
+void batteryDeepSleepProtect(float v) {
+  Serial.printf("[PWR] Bateria critica (%.2f V) -> deep sleep de protecao.\n", v);
+  boardBacklight(true);                       // garante tela visível p/ o aviso
+  sleepNotice("BATERIA", "FRACA - CARREGUE", "Religue a chave");
+  delay(2000);                                // tempo de ler o aviso
+  loraSleep();                                // rádio em sleep antes de cortar
+  boardDeepSleep();                           // corta energia e dorme (não volta)
+}
+
 void uiTask(void* pvParameters) {
   (void)pvParameters;
 
   uint32_t battTick = 0;   // contador para amostrar a bateria a cada ~5s
+  uint8_t  battLowCount = 0;   // leituras seguidas abaixo do limiar crítico
 
   for (;;) {
 #ifdef TEST_LORA_RANGE
@@ -453,6 +487,20 @@ void uiTask(void* pvParameters) {
       bool  charging = batteryIsCharging(v);
       uint8_t p = charging ? 100 : batteryPercent(v);
       Serial.printf("[BAT] %.2f V  (%u%%)%s\n", v, p, charging ? "  CHARGING" : "");
+
+      // Proteção de descarga profunda: se a bateria ficar abaixo do limiar
+      // por CFG_VBAT_LOW_COUNT leituras seguidas (e não carregando), dorme.
+      // A contagem evita dormir num pico de queda durante um TX.
+      if (CFG_VBAT_SLEEP_V > 0.0f) {
+        if (!charging && v > 0.1f && v < CFG_VBAT_SLEEP_V) {
+          if (++battLowCount >= CFG_VBAT_LOW_COUNT) {
+            batteryDeepSleepProtect(v);   // não retorna
+          }
+        } else {
+          battLowCount = 0;              // recuperou/carregando: zera
+        }
+      }
+
       AppStateGuard guard;
       // Só marca dirty se mudou de forma perceptível, para não repintar à toa.
       if ((uint8_t)g_state.battPercent != p ||

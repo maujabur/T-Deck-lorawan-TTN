@@ -1,5 +1,6 @@
 #include "board.h"
 #include <SPI.h>
+#include <esp_sleep.h>
 
 SemaphoreHandle_t g_spiMutex = nullptr;
 
@@ -44,4 +45,24 @@ void boardBacklight(bool on) {
 
 bool boardBacklightIsOn() {
   return s_blOn;
+}
+
+void boardDeepSleep() {
+  // 1) Backlight off.
+  boardBacklight(false);
+
+  // 2) Desseleciona os periféricos do bus e corta o trilho de energia. Isso
+  //    desliga tela/rádio/SD/I2C (o grosso do consumo). As Tasks não devem
+  //    mais tocar o bus depois daqui — quem chama já parou o rádio e está
+  //    prestes a dormir.
+  digitalWrite(BOARD_TFT_CS,    HIGH);
+  digitalWrite(BOARD_RADIO_CS,  HIGH);
+  digitalWrite(BOARD_SDCARD_CS, HIGH);
+  digitalWrite(BOARD_POWERON, LOW);
+
+  // 3) Deep sleep SEM fonte de wake: só o ciclo da chave física (power-cycle)
+  //    religa. Um toque acidental (bolinha) NÃO acorda — proteção real.
+  Serial.println("[PWR] Deep sleep de protecao. Religue a chave para voltar.");
+  Serial.flush();
+  esp_deep_sleep_start();   // não retorna
 }

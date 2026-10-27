@@ -42,6 +42,13 @@ void boardInit();
 void boardBacklight(bool on);
 bool boardBacklightIsOn();
 
+// Desliga tudo e entra em deep sleep (proteção de bateria). Apaga o backlight,
+// corta o trilho de energia dos periféricos (BOARD_POWERON) e chama
+// esp_deep_sleep_start() SEM fonte de wake: o aparelho só religa com o ciclo da
+// chave física (power-cycle). Não retorna.
+// IMPORTANTE: o rádio deve ser colocado em sleep ANTES (ver loraSleep()).
+void boardDeepSleep();
+
 // Mutex do barramento SPI. Qualquer Task que vá falar com TFT ou rádio
 // deve travar isto durante a transação para não colidir no bus.
 extern SemaphoreHandle_t g_spiMutex;

@@ -87,6 +87,14 @@ int16_t loraInit() {
   return state;
 }
 
+void loraSleep() {
+  if (radioPtr == nullptr) return;   // rádio não inicializou: nada a fazer
+  SpiBusGuard busGuard;
+  digitalWrite(BOARD_TFT_CS,    HIGH);
+  digitalWrite(BOARD_SDCARD_CS, HIGH);
+  radio.sleep();
+}
+
 void loraTask(void* pvParameters) {
   (void)pvParameters;
 

@@ -34,6 +34,35 @@
 #define CFG_ACK_TIMEOUT_MS             0
 
 // ============================================================
+// PROTEÇÃO DE BATERIA (descarga profunda)
+// ============================================================
+// O T-Deck tem um interruptor FÍSICO que corta a energia; mas se ele ficar
+// ligado com a bateria no limite (ex.: esquecido no transporte), a célula
+// Li-Ion pode descarregar demais. Esta proteção faz o firmware dormir sozinho.
+//
+// Abaixo de CFG_VBAT_SLEEP_V (Volts), por CFG_VBAT_LOW_COUNT leituras seguidas
+// (cada ~5s) e NÃO carregando, o T-Deck desliga o rádio e o trilho de energia
+// dos periféricos e entra em deep sleep. A contagem evita dormir num pico de
+// queda durante um TX.
+//
+// NÃO configuramos fonte de wake: só o CICLO DA CHAVE FÍSICA (OFF->ON) religa.
+// Assim um toque acidental (ex.: na bolinha) durante o transporte NÃO acorda o
+// aparelho — coerente com proteger a bateria de verdade.
+//
+// Ao religar a chave, o boot relê a bateria: se ainda estiver abaixo de
+// CFG_VBAT_WAKE_V (histerese, maior que a de dormir), avisa "CARREGUE" e volta
+// a dormir. Como o T-Deck não detecta o USB diretamente, é a própria subida da
+// tensão ao carregar que permite religar.
+//
+// Observação de design: a TELA APAGADA (tecla B) é uso discreto, NÃO dispara
+// sono. O único gatilho é a bateria crítica.
+//
+// 0 em CFG_VBAT_SLEEP_V desativa a proteção.
+#define CFG_VBAT_SLEEP_V               3.20f   // dorme abaixo disto
+#define CFG_VBAT_WAKE_V                3.40f   // só religa acima disto (histerese)
+#define CFG_VBAT_LOW_COUNT             3       // leituras seguidas p/ confirmar
+
+// ============================================================
 // TELEMETRIA / ThingSpeak
 // ============================================================
 
