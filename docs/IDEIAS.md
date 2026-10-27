@@ -46,3 +46,33 @@ precisaria escolher qual campo colore os pontos e como mapear o valor para cor.
 - Generalizar `rssiColor()` para `valueColor(value, min, max)` (auto-escala) e
   manter `rssiColor()` só no preset range test.
 - `popupFor()` monta linhas a partir dos campos presentes + seus nomes.
+
+## Firmware alternativo para o teclado (ESP32-C3) — a investigar
+
+Referência: https://github.com/rgrizzell/lilygo-t-deck-keyboard
+(firmware de substituição para o microcontrolador do TECLADO do T-Deck, não
+para o ESP32-S3 principal). Content was rephrased for compliance with
+licensing restrictions.
+
+**O que é.** Firmware open-source para o ESP32-C3 que roda dentro do teclado
+do T-Deck (o mesmo que respondemos no I2C 0x55). Substitui o firmware de
+fábrica da LilyGO.
+
+**Recursos (segundo o README):**
+- Buffer de teclas + comandos por I2C + mais logs pela UART.
+- Comando I2C de backlight DO TECLADO: endereço 0x01, dado Off=0 / On=1.
+- Leitura de tecla igual à atual: ler 1 byte do 0x55 (`requestFrom(0x55,1)`),
+  então nosso `keyboardRead()` continuaria compatível.
+- Hotkeys no próprio teclado: Alt+B alterna o backlight do teclado; Alt+L
+  limpa a tela (requer suporte do host).
+
+**Relevância para nós.** O backlight que já controlamos (tecla B via GPIO42)
+é o do DISPLAY; este é o do TECLADO, controlável por I2C — seria um bônus,
+não um substituto. A compatibilidade de leitura de teclas sugere que nosso
+firmware seguiria funcionando.
+
+**A pegadinha (por isso "se funcionar").** Gravar exige HARDWARE: adaptador
+USB-TTL + acesso aos pinos de debug do teclado (probes/test clips ou soldar um
+header de 6 pinos) e colocar o C3 em download mode (BOOT+RESET). Não é um flash
+simples pela USB do T-Deck; é invasivo e com risco de inutilizar o teclado.
+Avaliar custo/benefício antes de tentar.
