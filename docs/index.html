@@ -138,6 +138,11 @@
         <input type="checkbox" id="auto" /> auto 20s</label>
     </div>
 
+    <div class="row">
+      <label style="margin:0;display:flex;gap:4px;align-items:center;">
+        <input type="checkbox" id="fade" /> esmaecer rastro</label>
+    </div>
+
     <div id="stats"></div>
 
     <div class="hr"></div>
@@ -146,6 +151,7 @@
       <div><span style="background:#2ecc71"></span> forte (&ge; -70)</div>
       <div><span style="background:#f1c40f"></span> médio (-70 a -100)</div>
       <div><span style="background:#e74c3c"></span> fraco (&lt; -100)</div>
+      <div><span style="background:#555"></span> sem sinal (sem ACK)</div>
       <div style="margin-top:4px;"><span style="background:#2b6cb0;border-radius:50%"></span> waypoint</div>
     </div>
   </div>
@@ -380,7 +386,14 @@
     function popupFor(f) {
       const label = f.field7;
       const lp = localParts(f.created_at);
-      return `<b>entry ${f.entry_id}</b><br>${lp.date} ${lp.time} (GMT${TZ_OFFSET_HOURS})<br>` +
+      const head = `<b>entry ${f.entry_id}</b><br>${lp.date} ${lp.time} (GMT${TZ_OFFSET_HOURS})<br>`;
+      const hasSignal = (f.field1 != null && f.field1 !== '');
+      // Ponto sem sinal (sem ACK): não há RSSI/SNR para mostrar.
+      if (!hasSignal) {
+        return head + `<b style="color:#e74c3c">SEM SINAL (sem ACK)</b><br>seq: ${f.field5 ?? '-'}` +
+          (label != null ? `<br><b>WAYPOINT: rótulo ${label}</b>` : '');
+      }
+      return head +
         `RSSI ida: ${f.field1 ?? '-'} dBm<br>SNR ida: ${f.field2 ?? '-'} dB<br>` +
         `RSSI volta: ${f.field3 ?? '-'} dBm<br>seq/acks: ${f.field5 ?? '-'} / ${f.field6 ?? '-'}` +
         (label != null ? `<br><b>WAYPOINT: rótulo ${label}</b>` : '');
@@ -390,27 +403,41 @@
     // menor (trail que enfraquece); o mais recente fica cheio.
     function drawUpTo(count) {
       layer.clearLayers();
+      const fadeOn = $('fade').checked;   // "esmaecer rastro" (default off)
       const track = [];
       for (let i = 0; i < count; i++) {
         const f = feeds[i];
         const lat = parseFloat(f.latitude), lon = parseFloat(f.longitude);
         track.push([lat, lon]);
 
-        // Opacidade: ponto mais novo = 1.0; vai caindo para os antigos (min 0.15).
+        // Opacidade. Com "esmaecer rastro" LIGADO, o ponto mais novo = 1.0 e
+        // vai caindo para os antigos (trail). DESLIGADO (default), todos cheios
+        // (1.0) — foco em ver o sinal, não o histórico de passagem.
         const age = count - 1 - i;             // 0 = mais novo
-        const op  = Math.max(0.15, 1 - age * 0.04);
+        const op  = fadeOn ? Math.max(0.15, 1 - age * 0.04) : 1.0;
         const label = f.field7;
         const isLast = (i === count - 1);
+
+        // "Sem sinal" = ping sem ACK: o firmware OMITE field1 (rssi_ida) nesses
+        // pontos, então field1 vazio/null identifica a ausência de sinal.
+        const hasSignal = (f.field1 != null && f.field1 !== '');
 
         if (label != null) {
           // Waypoint: mantém a borda branca de propósito, para destacar.
           L.circleMarker([lat, lon], {
             radius: 9, color:'#fff', weight:2, fillColor:'#2b6cb0', fillOpacity:op
           }).bindPopup(popupFor(f)).addTo(layer);
+        } else if (!hasSignal) {
+          // Sem sinal: ponto escuro e translúcido, menor, para não competir
+          // com os pontos que têm RSSI.
+          L.circleMarker([lat, lon], {
+            radius: isLast ? 6 : 4, color:'#333', weight:1,
+            fillColor:'#555', fillOpacity: op * 0.55, opacity: op * 0.55
+          }).bindPopup(popupFor(f)).addTo(layer);
         } else {
           // Ponto normal: borda = cor do preenchimento escurecida (~65%),
           // em vez do preto duro, para o rastro ficar mais leve.
-          const fill = rssiColor(f.field1!=null?parseInt(f.field1):null);
+          const fill = rssiColor(parseInt(f.field1));
           L.circleMarker([lat, lon], {
             radius: isLast ? 7 : 5, color: darken(fill, 0.65), weight:1,
             fillColor: fill, fillOpacity: op, opacity: op
@@ -457,6 +484,11 @@
     $('scrub').addEventListener('input', () => {
       stopAnim();
       drawUpTo(parseInt($('scrub').value) + 1);
+    });
+    // Alternar "esmaecer rastro" redesenha o que está visível agora.
+    $('fade').addEventListener('change', () => {
+      const n = feeds.length ? (parseInt($('scrub').value) + 1) : 0;
+      drawUpTo(n || feeds.length);
     });
 
     $('load').addEventListener('click', load);

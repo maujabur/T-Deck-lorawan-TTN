@@ -22,6 +22,9 @@ struct Measurement {
   uint32_t seq;        // field5
   uint32_t acks;       // field6
   int16_t  wpLabel;    // field7 (-1 = não é waypoint)
+  bool     gotAck;     // teve ACK? Quando false, RSSI/SNR não têm significado
+                       // e o envio OMITE field1..4 -> field1 vazio no canal
+                       // vira o indicador de "sem sinal" para a web.
   double   lat;        // latitude
   double   lon;        // longitude
 };

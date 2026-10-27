@@ -282,7 +282,13 @@ static void drawRangeTestTo(Canvas& tft, const AppState& s) {
     else
       tft.printf("MARCA #%lu  rotulo %u", (unsigned long)s.wpCount, s.wpLastLabel);
   } else {
-    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    // Cor de ALTO CONTRASTE (legível sob sol) em vez do cinza-escuro antigo:
+    // ciano carregando; senão verde/amarelo/vermelho conforme a carga.
+    uint16_t battCol = s.battCharging ? TFT_CYAN
+                     : (s.battPercent > 50) ? TFT_GREEN
+                     : (s.battPercent > 20) ? TFT_YELLOW
+                                            : TFT_RED;
+    tft.setTextColor(battCol, TFT_BLACK);
     tft.setCursor(10, 212);
     if (s.battCharging) tft.printf("CHARGING %.2fV  M:%lu", s.battVolts,
                                    (unsigned long)s.wpCount);

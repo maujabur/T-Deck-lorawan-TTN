@@ -100,11 +100,18 @@ uint32_t telemetryBulkFlush(const Measurement* items, uint32_t n) {
     if (i) body += ",";
     body += "{\"created_at\":\"";
     body += isoUtc(m.ts);
-    body += "\",\"field1\":" + String(m.rssiFwd);
-    body += ",\"field2\":"  + String(m.snrFwd, 1);
-    body += ",\"field3\":"  + String(m.rssiRev);
-    body += ",\"field4\":"  + String(m.snrRev, 1);
-    body += ",\"field5\":"  + String(m.seq);
+    // RSSI/SNR só têm significado COM ACK. Sem ACK, OMITIMOS field1..4: assim
+    // field1 (rssi_ida) fica VAZIO no canal e serve de indicador de "sem sinal"
+    // para a web — sem gastar um campo dedicado.
+    if (m.gotAck) {
+      body += "\",\"field1\":" + String(m.rssiFwd);
+      body += ",\"field2\":"  + String(m.snrFwd, 1);
+      body += ",\"field3\":"  + String(m.rssiRev);
+      body += ",\"field4\":"  + String(m.snrRev, 1);
+      body += ",\"field5\":"  + String(m.seq);
+    } else {
+      body += "\",\"field5\":" + String(m.seq);
+    }
     body += ",\"field6\":"  + String(m.acks);
     if (m.wpLabel >= 0) body += ",\"field7\":" + String(m.wpLabel);
     body += ",\"latitude\":"  + String(m.lat, 6);

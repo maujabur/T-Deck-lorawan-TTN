@@ -200,17 +200,19 @@ void loraTask(void* pvParameters) {
     // Bufferiza a medição SÓ se houver ACK + FIX de posição + hora GPS válida.
     // O GPS trava a HORA antes do fix de posição 3D; sem fix, lat/lon seria
     // (0,0) ("Null Island") e poluiria o mapa. Então exigimos fix de verdade.
-    if (gotAck && fix && epoch > 0) {
+    // Bufferiza COM OU SEM ACK (o que importa agora é o mapa de cobertura):
+    // pontos sem ACK vão com gotAck=0 e a web os pinta como "sem sinal".
+    if (fix && epoch > 0) {
       Measurement m;
       m.ts = epoch; m.rssiFwd = rssiFwd; m.snrFwd = snrFwd;
       m.rssiRev = rssiRev; m.snrRev = snrRev;
       m.seq = seq; m.acks = acks;
       m.wpLabel = wpPending ? (int16_t)wpLabel : (int16_t)-1;
+      m.gotAck = gotAck;
       m.lat = lat; m.lon = lon;
       bufferPush(m);
-    } else if (gotAck) {
-      // Teve ACK mas NÃO entrou no buffer: diz por quê, para não parecer que a
-      // telemetria está quebrada quando na verdade falta fix/hora de GPS.
+    } else {
+      // Sem fix/hora de GPS não dá para posicionar no mapa: não bufferiza.
       Serial.printf("[RANGE] nao bufferizado (sem %s) -> aguardando GPS\n",
                     !fix ? "fix de posicao" : "hora GPS");
     }
